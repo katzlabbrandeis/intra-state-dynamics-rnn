@@ -132,7 +132,6 @@ def ensure_src_on_path(*, position: Literal["front", "back"] = "front") -> Optio
 def add_import_paths(
     *paths: Pathish,
     relative_to: _ANCHOR = "abs",
-    *,
     position: Literal["front", "back"] = "front",
     must_exist: bool = True,
     anchor_file: Optional[Pathish] = None,
