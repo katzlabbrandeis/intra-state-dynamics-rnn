@@ -1,11 +1,20 @@
-
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "blech-intra-state-dynamics"
-version = "0.0.1"
+version = "0.0.5"
 description = "BLECH (Katz) lab analysis pipeline for intra-state dynamics via LSTM and related analyses."
 readme = "README.md"
 requires-python = ">=3.10"
+dependencies = [
+"numpy",
+"polars >= 0.20",
+"scipy",
+"scikit-learn",
+"tables",
+]
 license = { text = "MIT" }
 authors = [{ name = "Vincent Calia-Bogan", email = "vincentccb@brandeis.edu" }]
 keywords = ["neuroscience", "analysis", "dimensionality reduction", "PCA", "RNN", "pipeline"]
@@ -14,6 +23,9 @@ keywords = ["neuroscience", "analysis", "dimensionality reduction", "PCA", "RNN"
 Homepage = "https://github.com/Vicinco5/Blech_intra_state_dynamics"
 Repository = "https://github.com/Vicinco5/Blech_intra_state_dynamics"
 Issues = "https://github.com/Vicinco5/Blech_intra_state_dynamics/issues"
+
+[project.scripts]
+bid = "core.scripts.orchestrate:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

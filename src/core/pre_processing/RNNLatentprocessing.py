@@ -119,10 +119,12 @@ pca95  = getattr(proc, "robust_pca_95_unwarped")
  -----------------------------------------------------------------------------
 
 """
+from __future__ import annotations
+
 import pickle
 import re
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 
 # general imports
 import numpy as np
