@@ -1,5 +1,30 @@
+
+
+[project]
+name = "blech-intra-state-dynamics"
+version = "0.0.1"
+description = "BLECH (Katz) lab analysis pipeline for intra-state dynamics via LSTM and related analyses."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Vincent Calia-Bogan", email = "vincentccb@brandeis.edu" }]
+keywords = ["neuroscience", "analysis", "dimensionality reduction", "PCA", "RNN", "pipeline"]
+
+[project.urls]
+Homepage = "https://github.com/Vicinco5/Blech_intra_state_dynamics"
+Repository = "https://github.com/Vicinco5/Blech_intra_state_dynamics"
+Issues = "https://github.com/Vicinco5/Blech_intra_state_dynamics/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["core*"]
+namespaces = false
+
 [tool.isort]
-line_length = 100
+line_length = 120
 multi_line_output = 3
 include_trailing_comma = true
 use_parentheses = true
@@ -7,7 +32,6 @@ ensure_newline_before_comments = true
 known_first_party = ["core"]
 src_paths = ["src"]
 
-[project]
-name = "blech-intra-state-dynamics"
-version = "0.0.1"
-requires-python = ">=3.10"
+# Optional: helps some editors match autopep8/pycodestyle behaviors
+[tool.pycodestyle]
+max_line_length = 120
