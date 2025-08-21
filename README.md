@@ -46,11 +46,114 @@ You should see a path under `<repo>/src/core`.
 
 ## Running things
 
+# Pre-processing via CLI
+
+
+## Pre-processing orchestration
+
+Run the H5 input pipeline from the CLI. This will:
+
+1) **Extract spike trains** from `.h5` into `.npz` under `output/intermediate_data/spike_trains_npz/`
+2) **Copy `.info` files** into `output/intermediate_data/info_files/`
+3) **Read changepoints** from **RAW `.pkl`** (authoritative, read-only). No caching is written by default.
+
+### Basic usage
+
+Zero-install (after `bootstrap.py`):
+
+```
+python run.py preprocess_h5_input first-input \
+  --h5-root "/path/to/spikesorting" \
+  --pkl-root "/path/to/raw_pkl_dir" \
+  --dry-run
+````
+
+Installed CLI (`bid`), after `pip install -e .`:
+
+```bash
+bid preprocess_h5_input first-input \
+  --h5-root "/path/to/spikesorting" \
+  --pkl-root "/path/to/raw_pkl_dir" \
+  --force
+```
+
+Flags:
+
+* `--spike-trains-path` (default `/spike_trains`) – HDF5 group where spike arrays live
+* `--dry-run` – show actions without writing files
+* `--force` – re-run steps even if outputs already exist
+
+### Where outputs go
+
+> By default the pipeline caches per-dataset changepoints (extracted from RAW `.pkl`) under:
+
+`output/intermediate_data/pkl_cache/<npz_stem>_changepoints.pkl`
+
+> RAW .pkl at --pkl-root remains the authoritative source; the cache is derived and disposable.
+
+```
+output/intermediate_data/
+  ├─ spike_trains_npz/     # H5→NPZ artifacts
+  ├─ info_files/           # copied .info files
+  └─ pkl_cache/            # (reserved; will cache by defalt)
+```
+
+Changepoint (pkl file) Caching is **on by default**. You can disable it:
+
+```bash
+bid preprocess_h5_input first-input \
+  --h5-root "/path/to/spikesorting" \
+  --pkl-root "/path/to/raw_pkl_dir" \
+  --no-cache-changepoints
+```
+
+### Parameters & labels
+
+Human-friendly names (taste replacements) and epoch labels are stored in:
+
+```
+src/core/config/pipeline_params.json
+```
+
+On first run, the file is created with defaults:
+
+```json
+{
+  "taste_replacements": {
+    "nacl": "NaCl",
+    "suc": "Sucrose",
+    "ca":  "Citric Acid",
+    "qhcl":"Quinine"
+  },
+  "epoch_labels": [
+    "Identification",
+    "Palatability",
+    "Decision",
+    "2000 ms Post-Stimulus"
+  ]
+}
+
+> more params are to be added in the future, as this is a WIP.
+
+```
+
+You can edit this JSON; the orchestrator loads it automatically.
+
+> **Note:** RAW `.pkl` under `--pkl-root` remains the **authoritative** source for changepoints. The pipeline reads from it and does not modify or cache changepoints unless you add such a step later.
+
 ### Option A — Zero-install (recommended for development)
 
 ```bash
 python run.py --help
-python run.py preprocess --dry-run
+python run.py preprocess_dry --dry-run
+```
+> preprocess_dry will ensure that all imports work. Please understand that this will not actually process any such data.
+
+To init the intermediate files off of a given H5 dir:
+
+```
+bid preprocess first-input --h5-root "/path/to/h5/files" \
+  --pkl-root "/path/to/pkl files" --force
 ```
 
 `run.py` temporarily adds `<repo>/src` to `sys.path` **for this process only** and dispatches to the orchestration CLI.
@@ -69,7 +172,7 @@ Install in the active env, then use `bid`:
 ```bash
 python -m pip install -e .
 bid --help
-bid preprocess --dry-run
+bid preprocess_dry --dry-run
 ```
 
 > If `bid` isn’t found, you likely installed to a different env: check `which python` and `which bid`.

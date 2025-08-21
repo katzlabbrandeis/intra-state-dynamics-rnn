@@ -91,8 +91,9 @@ def find_copy_h5info(source_path: str | os.PathLike | None = None,
             "Enter the destination directory path for copying .info files: "
         )
 
-    src = Path(source_path)
-    dst = Path(destination_path)
+    src = Path(source_path).expanduser().resolve()
+    dst = Path(destination_path).expanduser().resolve()
+    dst.mkdir(parents=True, exist_ok=True)  # new
     if not src.exists() or not src.is_dir():
         print(f"[find_copy_h5info] Invalid source directory: {src}")
         return []
@@ -101,7 +102,7 @@ def find_copy_h5info(source_path: str | os.PathLike | None = None,
         os.makedirs(destination_path)
 
     info_files: List[str] = []  # Initialize list to store .info file paths
-    for entry in sorted(os.scandir(src, key=lambda e: e.name.lower())):
+    for entry in sorted(src.rglob("*.info"), key=lambda e: e.name.lower()):  # old: os.scandir
         try:
             if entry.is_dir():
                 # Recurse into subdirectories
@@ -122,75 +123,66 @@ def find_copy_h5info(source_path: str | os.PathLike | None = None,
     return info_files
 
 
-def process_info_files(info_path: str | os.PathLike, dataset_num: str) -> List[str]:
+def process_info_files(info_path, dataset_num) -> List[str]:
     """
-    Find the `.info` file matching `dataset_num` and extract taste labels.
+    Find the .info file that matches `dataset_num` (by the first two YYMMDD tokens)
+    and return its taste list.
 
-    Matching rule
-    -------------
-    Extract the first two 6-digit tokens from `dataset_num` and from each `.info`
-    filename in `info_path`. The first file whose first two tokens match wins.
+    Matching rule:
+      - Extract the first two 6-digit numbers from the dataset name (YYMMDD_YYMMDD...)
+      - Find the first *.info whose filename contains the same first two 6-digit numbers in order.
 
     Parameters
     ----------
-    info_path
-        Directory containing `.info` files (JSON).
-    dataset_num
-        Dataset identifier string (often an `.npz` filename). Must contain at least
-        two 6-digit tokens (e.g., '240101_123456').
+    info_path : str | Path
+        Directory containing .info files (flat, after copying).
+    dataset_num : str
+        Typically an .npz filename like 'AM35_4Tastes_201229_150307_repacked.npz'.
 
     Returns
     -------
     list[str]
-        The `tastes` list from the `.info` JSON (usually under `taste_params.tastes`).
-        Returns an empty list if the file is found but does not contain the key.
-
-    Raises
-    ------
-    ValueError
-        If `dataset_num` contains fewer than two 6-digit tokens.
-    FileNotFoundError
-        If no `.info` file in `info_path` matches the tokens from `dataset_num`.
+        Tastes read from the file, or [] if missing.
     """
-    def find_matching_info_file() -> Optional[Path]:
-        # Look for two YYMMDD-like tokens in dataset_num
-        dataset_numbers = re.findall(r"\d{6}", dataset_num)
-        if len(dataset_numbers) < 2:
-            raise ValueError(
-                "The dataset_num should contain at least two 6-digit numbers."
-            )
+    root = Path(info_path).expanduser().resolve()
+    if not root.is_dir():
+        raise FileNotFoundError(f"Info dir not found: {root}")
 
-        for entry in sorted(os.scandir(info_path)):
-            if entry.is_file() and entry.name.endswith(".info"):
-                file_numbers = re.findall(r"\d{6}", entry.name)
-                if len(file_numbers) >= 2 and file_numbers[:2] == dataset_numbers[:2]:
-                    return entry.path
-        return None
-
-    def extract_tastes_from_info(file_path: Path) -> List[str]:
-        with open(file_path, "r") as file:
-            try:
-                data = json.load(file)
-                # Typical structure: { "taste_params": { "tastes": ["NaCl", "Sucrose", ...] } }
-                # print("JSON content:", data)  # Debug print to inspect the JSON content
-                if "taste_params" in data and "tastes" in data["taste_params"]:
-                    return data["taste_params"]["tastes"]
-                else:
-                    print(
-                        "No 'tastes' key found in the 'taste params' key of the JSON data."
-                    )  # Debug print if key is missing
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON from file {file_path}: {e}")
-        return []
-
-    matching_info_file = find_matching_info_file()
-    if matching_info_file:
-        dataset_tastes = extract_tastes_from_info(matching_info_file)
-        return dataset_tastes
-    else:
-        raise FileNotFoundError(
-            f"No matching .info file found for dataset_num: {dataset_num}"
+    # normalize dataset name (strip any path, keep name)
+    ds_name = Path(str(dataset_num)).name
+    ds_tokens = re.findall(r"\d{6}", ds_name)
+    if len(ds_tokens) < 2:
+        raise ValueError(
+            f"Expected at least two 6-digit tokens in dataset name: {ds_name}"
         )
+    key2 = tuple(ds_tokens[:2])
+
+    # iterate deterministically over *.info filenames
+    candidates = sorted(root.glob("*.info"), key=lambda p: p.name.lower())
+
+    match_path = None
+    for fp in candidates:
+        file_tokens = re.findall(r"\d{6}", fp.name)
+        if len(file_tokens) >= 2 and tuple(file_tokens[:2]) == key2:
+            match_path = fp
+            break
+
+    if match_path is None:
+        raise FileNotFoundError(
+            f"No matching .info file in {root} for dataset tokens {key2} (from {ds_name})"
+        )
+
+    # read tastes
+    try:
+        with match_path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        tastes = data.get("taste_params", {}).get("tastes", [])
+        if not isinstance(tastes, list):
+            tastes = []
+        return tastes
+    except Exception as e:
+        print(f"[process_info_files] Failed to parse {match_path.name}: {e}")
+        return []
 
 
 def modify_tastes(dataset_tastes: Iterable[str], replacements: Dict[str, str]) -> List[str]:

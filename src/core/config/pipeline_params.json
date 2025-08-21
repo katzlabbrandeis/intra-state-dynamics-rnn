@@ -1,0 +1,16 @@
+
+
+{
+  "taste_replacements": {
+    "nacl": "NaCl",
+    "suc": "Sucrose",
+    "ca": "Citric Acid",
+    "qhcl": "Quinine"
+  },
+  "epoch_labels": [
+    "Identification",
+    "Palatability",
+    "Decision",
+    "2000 ms Post-Stimulus"
+  ]
+}
