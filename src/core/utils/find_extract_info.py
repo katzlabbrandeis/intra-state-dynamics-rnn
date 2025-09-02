@@ -115,11 +115,11 @@ def find_copy_h5info(source_path: str | os.PathLike | None = None,
                 try:
                     shutil.copy(entry.path, destination_path)
                 except Exception as copy_exc:
-                    print(f"[find_copy_h5info] Failed to copy '{entry.path}' → '{dst}': {copy_exc!r}")
+                    print(f"[find_copy_h5info] Failed to copy '{entry}' → '{dst}': {copy_exc!r}")
         except PermissionError as pe:
-            print(f"[find_copy_h5info] Permission denied: {entry.path} ({pe})")
+            print(f"[find_copy_h5info] Permission denied: {entry} ({pe})")
         except Exception as exc:
-            print(f"[find_copy_h5info] Error reading {entry.path}: {exc!r}")
+            print(f"[find_copy_h5info] Error reading {entry}: {exc!r}")
     return info_files
 
 

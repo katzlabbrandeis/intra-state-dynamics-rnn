@@ -17,6 +17,7 @@ import argparse
 from pathlib import Path
 
 from core.config.preprocess import PreprocConfig
+from core.pre_processing.orchestrate_convolved_fr import orchestrate_convolved_fr
 from core.pre_processing.orchestrate_h5_input import orchestrate_h5_input
 
 
@@ -78,8 +79,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Process H5→NPZ, copy .info, unpickle CPs (RAW PKL is authoritative).",
         formatter_class=_HelpFmt,
     )
-    p_first.add_argument("--h5-root", required=True, help="Root directory containing .h5 trees")
-    p_first.add_argument("--pkl-root", required=True, help="Directory containing RAW .pkl files")
+
+    # Accept BOTH spellings; both map to the same dest
+    p_first.add_argument("--h5-root", "--h5_root", dest="h5_root",
+                         help="H5 root (remembered in roots.json). Required on first run.")
+    p_first.add_argument("--pkl-root", "--pkl_root", dest="pkl_root",
+                         help="RAW PKL root (remembered). If omitted, uses stored value or falls back to cache.")
+    p_first.add_argument("--rnn-latent-parquet-root", "--rnn_latent_parquet_root",
+                         dest="rnn_latent_parquet_root",
+                         help="Root of precomputed RNN latent Parquets (remembered).")
     p_first.add_argument("--spike-trains-path", default="/spike_trains", help="HDF5 group path")
     p_first.add_argument("--force", action="store_true", help="Re-run steps even if outputs exist")
     p_first.add_argument("--dry-run", action="store_true", help="Describe actions; do not write")
@@ -107,6 +115,17 @@ def main(argv: list[str] | None = None) -> int:
             help="Cache per-dataset CPs under output/intermediate_data/pkl_cache/.",
         )
 
+    # --- FR step
+    p2 = sub.add_parser(
+        "preprocess_intermediate_fr",
+        help="Compute FR parquet (lite if needed), clean columns, and run latent processor on FR.",
+        formatter_class=_HelpFmt,
+    )
+    p2.add_argument("--pkl-root", "--pkl_root", dest="pkl_root",
+                    help="RAW PKL directory (authoritative). If omitted, uses stored roots.json or cache.")
+    p2.add_argument("--force", action="store_true", help="Re-run even if outputs exist")
+    p2.add_argument("--dry-run", action="store_true", help="Describe actions; do not write")
+
     args = parser.parse_args(argv)
 
     # --- Dispatch
@@ -118,11 +137,17 @@ def main(argv: list[str] | None = None) -> int:
         print("[bid] preprocess_dry: OK — CLI & imports are wired correctly.")
         return 0
 
+    if args.cmd == "preprocess_intermediate_fr":
+        repo_root = Path(__file__).resolve().parents[3]
+        cfg = PreprocConfig.from_cli(args, repo_root, require_h5=False)
+        orchestrate_convolved_fr(repo_root, pkl_root=cfg.pkl_root, force=args.force, dry_run=args.dry_run)
+        return 0
+
     if args.cmd == "preprocess_h5_input":
         # Default pipeline is 'first-input' if omitted
         if args.pipeline == "first-input":
             repo_root = Path(__file__).resolve().parents[3]  # .../src/core/scripts -> repo root
-            cfg = PreprocConfig.from_cli(args, repo_root)
+            cfg = PreprocConfig.from_cli(args, repo_root, require_h5=True)
             orchestrate_h5_input(
                 cfg,
                 force=args.force,

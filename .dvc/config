@@ -1,0 +1,4 @@
+[core]
+    remote = abu_vin_bid
+['remote "abu_vin_bid"']
+    url = s3://abu-dvc-store/auto-slide

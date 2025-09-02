@@ -83,7 +83,7 @@ def all_nrns_to_df(all_parquet_path: str | os.PathLike) -> pl.DataFrame:
         return pl.DataFrame()
 
 
-def read_parquet_files_into_dict(parquet_path: str | os.PathLike) -> Dict[str, pl.DataFrame]:
+def read_parquet_files_into_dict(parquet_path: str | Path) -> Dict[str, pl.DataFrame]:
     """
     Reads all .parquet files in a directory into a dictionary.
 
@@ -104,7 +104,7 @@ def read_parquet_files_into_dict(parquet_path: str | os.PathLike) -> Dict[str, p
     if not root.is_dir():
         print(f"[read_parquets] not a directory: {root}")
         return {}
-    dataframes_dict = Dict[str, pl.DataFrame] = {}
+    dataframes_dict: dict[str, pl.DataFrame] = {}
     # `sorted` to ensure deterministic key insertion order.
     for file in sorted(root.glob("*.parquet")):  # using glob which is performant
         key = file.stem  # file.stem gives you filename without extension
