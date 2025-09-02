@@ -54,7 +54,7 @@ class PreprocConfig:
             repo_root=repo_root,
             cli_h5_root=getattr(args, "h5_root", None),
             cli_pkl_root=getattr(args, "pkl_root", None),
-            cli_latent_root=getattr(args, "rnn_latent_parquet_root", None),
+            cli_rnn_latent_root=getattr(args, "rnn_latent_parquet_root", None),
             pkl_cache_dir=paths.pkl_dir,
             require_h5=require_h5,
         )

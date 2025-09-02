@@ -27,6 +27,7 @@ class Roots:
     h5_root: Optional[Path] = None
     pkl_root: Optional[Path] = None
     latent_parquet_root: Optional[Path] = None
+    rnn_pred_fr_parquet_root: Optional[Path] = None  # adding support for the RNN's firing rate predicitions...
 
     def to_jsonable(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -45,6 +46,7 @@ class Roots:
             h5_root=_p(m.get("h5_root")),
             pkl_root=_p(m.get("pkl_root")),
             latent_parquet_root=_p(m.get("latent_parquet_root")),
+            rnn_pred_fr_parquet_root=_p(m.get("rnn_pred_fr_parquet_root")),
         )
 
 
@@ -86,6 +88,7 @@ def update_roots(repo_root: Path, **overrides: Optional[str | Path]) -> Roots:
         h5_root=_norm(overrides.get("h5_root", cur.h5_root)),
         pkl_root=_norm(overrides.get("pkl_root", cur.pkl_root)),
         latent_parquet_root=_norm(overrides.get("latent_parquet_root", cur.latent_parquet_root)),
+        rnn_pred_fr_parquet_root=_norm(overrides.get("rnn_pred_fr_parquet_root", cur.rnn_pred_fr_parquet_root))
     )
     save_roots(repo_root, new)
     return new
@@ -102,9 +105,11 @@ def resolve_roots(
     *,
     cli_h5_root: Optional[str | Path] = None,
     cli_pkl_root: Optional[str | Path] = None,
-    cli_latent_root: Optional[str | Path] = None,
+    cli_rnn_latent_root: Optional[str | Path] = None,
+    cli_rnn_pred_fr_root: Optional[str | Path] = None,  # new
     pkl_cache_dir: Optional[Path] = None,
     require_h5: bool = False,
+    require_rnn_latent=True,
 ) -> Roots:
     """
     Precedence:
@@ -119,7 +124,8 @@ def resolve_roots(
     # Prefer CLI when provided (and persist change)
     h5 = _norm(cli_h5_root) or stored.h5_root
     pkl = _norm(cli_pkl_root) or stored.pkl_root
-    lat = _norm(cli_latent_root) or stored.latent_parquet_root
+    lat = _norm(cli_rnn_latent_root) or stored.latent_parquet_root
+    pfr = _norm(cli_rnn_pred_fr_root) or stored.rnn_pred_fr_parquet_root
 
     # H5: must exist if required
     if require_h5 and h5 is None:
@@ -136,9 +142,10 @@ def resolve_roots(
     changed = (
         (h5 != stored.h5_root) or
         (pkl != stored.pkl_root) or
-        (lat != stored.latent_parquet_root)
+        (lat != stored.latent_parquet_root) or
+        (pfr != stored.rnn_pred_fr_parquet_root)
     )
     if changed:
-        save_roots(repo_root, Roots(h5_root=h5, pkl_root=pkl, latent_parquet_root=lat))
+        save_roots(repo_root, Roots(h5_root=h5, pkl_root=pkl, latent_parquet_root=lat, rnn_pred_fr_parquet_root=pfr))
 
-    return Roots(h5_root=h5, pkl_root=pkl, latent_parquet_root=lat)
+    return Roots(h5_root=h5, pkl_root=pkl, latent_parquet_root=lat, rnn_pred_fr_parquet_root=pfr)

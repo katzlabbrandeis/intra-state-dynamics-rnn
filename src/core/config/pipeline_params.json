@@ -30,5 +30,10 @@
     "compute_second_derivative": false,
     "derivative_source": "threshold",
     "save_outputs": true
+  },
+    "pred_fr": {
+    "bin_size_ms": 25,
+    "scale_bin_to_hz": true,
+    "clip_negative": false
   }
 }

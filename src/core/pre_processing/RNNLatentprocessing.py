@@ -350,7 +350,7 @@ class RNNLatentProcessor:
                             f"Index error with dataset {dataset_name}: shape {extracted_pkl.shape}"
                         )
                 else:
-                    print(f"No valid changepoints found for dataset {dataset_name}")
+                    print(f" [RNNlatproce.] No valid changepoints found for dataset {dataset_name}")
 
     # method that saves changepoints so the entire processor doesn't need to be run again and again
     def extract_changepoints_dict(self, save_outputs: bool = False) -> dict:

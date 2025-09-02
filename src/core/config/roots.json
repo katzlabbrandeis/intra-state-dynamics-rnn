@@ -1,5 +1,6 @@
 {
   "h5_root": "/Volumes/T7 Shield/spikesorting",
-  "pkl_root": "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/pkl files",
-  "latent_parquet_root": null
+  "pkl_root": "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/Blech_intra_state_dynamics/output/intermediate_data/pkl_cache",
+  "latent_parquet_root": "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/july_rnn/july_25_output/pred_latent",
+  "rnn_pred_fr_parquet_root": "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/july_rnn/july_25_output/pred_fr"
 }

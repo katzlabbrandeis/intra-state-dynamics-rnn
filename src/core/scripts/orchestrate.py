@@ -19,6 +19,8 @@ from pathlib import Path
 from core.config.preprocess import PreprocConfig
 from core.pre_processing.orchestrate_convolved_fr import orchestrate_convolved_fr
 from core.pre_processing.orchestrate_h5_input import orchestrate_h5_input
+from core.pre_processing.orchestrate_pred_fr import orchestrate_pred_fr
+from core.pre_processing.orchestrate_rnn_latents import orchestrate_rnn_latents
 
 
 # Pretty, actionable help output
@@ -126,6 +128,42 @@ def main(argv: list[str] | None = None) -> int:
     p2.add_argument("--force", action="store_true", help="Re-run even if outputs exist")
     p2.add_argument("--dry-run", action="store_true", help="Describe actions; do not write")
 
+    # -- RNN Latents step
+    p3 = sub.add_parser(
+        "preprocess_rnn_latents",
+        help="Run RNNLatentProcessor on precomputed RNN latent Parquets.",
+        formatter_class=_HelpFmt,
+    )
+    p3.add_argument("--rnn-latent-parquet-root", "--rnn_latent_parquet_root",
+                    dest="latent_parquet_root",
+                    help="Root of RNN latent Parquets (remembered in roots.json).")
+    p3.add_argument("--pkl-root", "--pkl_root", dest="pkl_root",
+                    help="RAW PKL directory (authoritative). If omitted, uses stored roots.json or cache.")
+    p3.add_argument("--force", action="store_true", help="Re-run even if outputs exist")
+    p3.add_argument("--dry-run", action="store_true", help="Describe actions; do not write")
+
+    # -- RNN predicted FR step
+    p4 = sub.add_parser(
+        "preprocess_pred_fr",
+        help="Process predicted FR Parquets: clean schema & run RNNLatentProcessor.",
+        formatter_class=_HelpFmt,
+        epilog=(
+            "Inputs:\n"
+            "  --rnn-pred-fr-parquet-root  (remembered in roots.json)\n"
+            "  --pkl-root              RAW PKL dir (authoritative; falls back to cache if omitted)\n\n"
+            "Outputs under output/intermediate_data/:\n"
+            "  pred_fr_clean/          # cleaned Parquets\n"
+            "  PRED_FR_RNN/            # processor outputs (PCA, derivatives, warped/unwarped, changepoints)\n"
+        ),
+    )
+    p4.add_argument("--rnn-pred-fr-parquet-root", "--rnn_pred_fr_parquet_root",
+                    dest="rnn_pred_fr_parquet_root",
+                    help="Root of predicted FR Parquets (remembered).")
+    p4.add_argument("--pkl-root", "--pkl_root", dest="pkl_root",
+                    help="RAW PKL directory (authoritative). If omitted, uses stored roots.json or cache.")
+    p4.add_argument("--force", action="store_true", help="Re-run even if outputs exist")
+    p4.add_argument("--dry-run", action="store_true", help="Describe actions; do not write")
+
     args = parser.parse_args(argv)
 
     # --- Dispatch
@@ -155,6 +193,29 @@ def main(argv: list[str] | None = None) -> int:
                 cache_changepoints=getattr(args, "cache_changepoints", True),
             )
             return 0
+    # -- dispatch for the RNN latents
+    if args.cmd == "preprocess_rnn_latents":
+        repo_root = Path(__file__).resolve().parents[3]
+        cfg = PreprocConfig.from_cli(repo_root=repo_root, args=args, require_h5=False)
+        orchestrate_rnn_latents(
+            repo_root,
+            latent_parquet_root=getattr(args, "latent_parquet_root", None),  # resolved or remembered
+            pkl_root=cfg.pkl_root,                          # resolved or cache fallback
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+        return 0
+    # -- Dispatch for the predicted firing rate by the RNN:
+    if args.cmd == "preprocess_pred_fr":
+        repo_root = Path(__file__).resolve().parents[3]
+        orchestrate_pred_fr(
+            repo_root,
+            rnn_pred_fr_root=getattr(args, "rnn_pred_fr_parquet_root", None),
+            pkl_root=getattr(args, "pkl_root", None),
+            force=args.force,
+            dry_run=args.dry_run,
+        )
+        return 0
 
     # Fallback: show help for the chosen command
     parser.print_help()
