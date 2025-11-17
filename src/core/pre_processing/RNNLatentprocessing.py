@@ -131,6 +131,8 @@ import numpy as np
 import polars as pl
 from scipy.interpolate import interp1d
 from sklearn.decomposition import PCA
+from scipy.stats import mannwhitneyu  # for the internal ttesting that is taking place
+
 
 # specialized imports
 # note: must move these to utils
@@ -186,6 +188,7 @@ class RNNLatentProcessor:
         self.is_latent: bool = False
         self.is_neuron: bool = False
         self.is_rr_fr: bool = False  # special neuron naming for "rr_firing" datasets
+        
 
         # unwarped outputs
         self.epoch_dataframes_dict_unwarped: Dict[str, pl.DataFrame] = {}
@@ -193,6 +196,11 @@ class RNNLatentProcessor:
         self.robust_pca_full_unwarped: Dict[str, pl.DataFrame] = {}
         self.first_derivs_thresh_unwarped: Dict[str, pl.DataFrame] = {}
         self.second_derivs_thresh_unwarped: Dict[str, pl.DataFrame] = {}
+        # t-test (MWU) outputs (only unwarped-- not applicable to warped data)
+        self.ttest_raw_output_unwarped: Dict[str, pl.DataFrame] = {}
+        # MWU internal flags
+        self.enforce_fr_threshold: bool= True # firing rate gate on MWU for neuron_ dims (not for pca or latents)
+        self.fr_threshold_hz: float = 1.0 # firing rate threshold for this; mean across the state. 
 
         # warped outputs
         self.epoch_dataframes_dict_warped: Dict[str, pl.DataFrame] = {}
@@ -903,6 +911,168 @@ class RNNLatentProcessor:
             )
 
         return (pca_lat_dict_thresh, pca_lat_dict_full) if return_dicts else None
+    # ----------------------------------------------------------------------------
+    # MWU half-split -- literally splits the first and second half 
+    # of a state and compares them using non-poarametric ttest. (added as of 9.29)
+    # ----------------------------------------------------------------------------
+
+    def _get_signal_cols_any(self, df: pl.DataFrame) -> list[str]:
+        """
+        Return signal columns across possible schemas:
+          - PC_*            (from PCA outputs)
+          - latent_dim_*    (RNN latent)
+          - neuron_*        (firing rates / predicted FR)
+        """
+        return [
+            c for c in df.columns
+            if c.startswith("PC_") or c.startswith("latent_dim_") or c.startswith("neuron_")
+        ]
+    
+    def _compute_mwu_halfsplit_segment(
+        self,
+        seg: pl.DataFrame,
+        dims: list[str],
+        *,
+        alpha: float = 0.05,
+        min_total_n: int = 4, # so that there are comparison points with some sort of variance
+        enforce_fr_threshold: Optional[bool] = None, 
+        fr_threshold_hz: Optional[float] = None,
+    ) -> pl.DataFrame:
+        """
+        For a single (taste, changepoint, trial) segment, split rows into first/second halves
+        and compute two-sided Mann–Whitney U per dim. Adds 3 columns per dim:
+            mwu_p_<dim>, mwu_delta_<dim>, mwu_sig_<dim>
+        Values are repeated down all rows of the segment (PCA explained-variance style).
+        """
+        if enforce_fr_threshold is None: 
+            enforce_fr_threshold = getattr(self, "enforce_fr_threshold", False)
+        if fr_threshold_hz is None: 
+            fr_threshold_hz = getattr(self, "fr_threshold_hz", 1.0)
+        n = seg.height
+        out_series = []
+    
+        # If too short, emit NaN/False columns but preserve shape
+        if n < min_total_n:
+            for d in dims:
+                out_series += [
+                    pl.Series(f"mwu_p_{d}",     [np.nan] * n),
+                    pl.Series(f"mwu_delta_{d}", [np.nan] * n),
+                    pl.Series(f"mwu_sig_{d}",   [False] * n),
+                ]
+            return seg.with_columns(out_series)
+    
+        # Split (odd -> ceil on second half)
+        n1 = n // 2
+        X = seg.select(dims).to_numpy()
+        A = X[:n1, :]
+        B = X[n1:, :]
+    
+        for j, d in enumerate(dims):
+            # --- NEW: firing-rate gate for neuron_* columns-- basic 1Hz threshold ---
+            if enforce_fr_threshold and d.startswith("neuron_"):
+                seg_mean = np.nanmean(X[:, j]) if X.shape[0] else np.nan
+                if (not np.isfinite(seg_mean)) or (seg_mean < fr_threshold_hz):
+                    # Treat like zero-variance: skip test, fill NaNs/False
+                    out_series += [
+                        pl.Series(f"mwu_p_{d}",     [np.nan] * n),
+                        pl.Series(f"mwu_delta_{d}", [np.nan] * n),
+                        pl.Series(f"mwu_sig_{d}",   [False] * n),
+                    ]
+                    continue
+            a = A[:, j]
+            b = B[:, j]
+    
+            # Drop NaNs
+            a = a[~np.isnan(a)]
+            b = b[~np.isnan(b)]
+    
+            if (a.size < 2) or (b.size < 2):
+                p, delta, sig = np.nan, np.nan, False
+            elif (np.nanvar(a) == 0.0) or (np.nanvar(b) == 0.0):
+                # Flat half: skip
+                p, delta, sig = np.nan, np.nan, False
+            else:
+                res = mannwhitneyu(a, b, alternative="two-sided", method="auto")
+                U = float(res.statistic)
+                p = float(res.pvalue)
+                # Cliff's delta via U (in [-1, 1])
+                delta = (2.0 * U) / (a.size * b.size) - 1.0
+                sig = (p < alpha)
+    
+            out_series += [
+                pl.Series(f"mwu_p_{d}",     [p] * n),
+                pl.Series(f"mwu_delta_{d}", [delta] * n),
+                pl.Series(f"mwu_sig_{d}",   [sig] * n),
+            ]
+    
+        return seg.with_columns(out_series)
+    
+    def compute_mwu_halfsplit_for_df(
+        self,
+        df: pl.DataFrame,
+        *,
+        alpha: float = 0.05,
+        min_total_n: int = 4,
+    ) -> pl.DataFrame:
+        """
+        Run MWU half-split per (taste, changepoint, trial) and per signal dimension.
+        Returns the same-shaped table with added per-dim MWU columns repeated per row.
+        """
+        dims = self._get_signal_cols_any(df)
+        if not dims:
+            return df
+    
+        augmented = []
+        for t in df["taste"].unique().to_list():
+            dft = df.filter(pl.col("taste") == t)
+            for cp in dft["changepoint"].unique().to_list():
+                dftc = dft.filter(pl.col("changepoint") == cp)
+                for tr in dftc["trial"].unique().to_list():
+                    seg = dftc.filter(pl.col("trial") == tr)
+                    if seg.is_empty():
+                        continue
+                    seg_aug = self._compute_mwu_halfsplit_segment(
+                        seg, dims, alpha=alpha, min_total_n=min_total_n
+                    )
+                    augmented.append(seg_aug)
+    
+        return pl.concat(augmented) if augmented else df
+    
+    def run_mwu_halfsplit(self, *, alpha: float = 0.05, min_total_n: int = 4) -> None:
+        """
+        Compute MWU half-split ONLY for:
+          - unwarped raw output (epoch_dataframes_dict_unwarped)
+          - Note: unwarped raw output can be firing rate data
+          - unwarped robust PCA threshold (robust_pca_{thr}_unwarped)
+          - Note: this can also be firing rate data
+          - Only takes unwarped pca/non pca'd data; the SOURCE of that data
+          - can be firing rate, latents, or whatever else. 
+        Stores results in:
+          - self.ttest_raw_output_unwarped
+          - self.ttest_robust_pca_{thr}_unwarped  (via setattr)
+        DataFrame keys are suffixed with `_ttest`.
+        """
+        # 1) Raw (unwarped)
+        raw_in = self.epoch_dataframes_dict_unwarped or {}
+        raw_out: Dict[str, pl.DataFrame] = {}
+        for key, df in raw_in.items():
+            raw_out[f"{key}_ttest"] = self.compute_mwu_halfsplit_for_df(
+                df, alpha=alpha, min_total_n=min_total_n
+            )
+        self.ttest_raw_output_unwarped = raw_out
+    
+        # 2) Robust PCA (thresholded, unwarped)
+        thr = int(self.variance_threshold)
+        pca_key_unw = f"robust_pca_{thr}_unwarped"
+        pca_in: Dict[str, pl.DataFrame] = getattr(self, pca_key_unw, {})
+        pca_out: Dict[str, pl.DataFrame] = {}
+        for key, df in pca_in.items():
+            pca_out[f"{key}_ttest"] = self.compute_mwu_halfsplit_for_df(
+                df, alpha=alpha, min_total_n=min_total_n
+            )
+        setattr(self, f"ttest_robust_pca_{thr}_unwarped", pca_out)
+
+
     # -------------------------------------------------------------------------
     # Numeric helpers
     # -------------------------------------------------------------------------
@@ -984,6 +1154,16 @@ class RNNLatentProcessor:
                 getattr(self, f"second_derivatives_{thr}_unwarped", {}),
                 getattr(self, f"second_derivatives_{thr}_warped", {})
             ),
+            # Unwarped raw output t-tests (new mwu)
+            "raw_output_ttest": (
+                getattr(self, "ttest_raw_output_unwarped", {}),
+                {}  # only unwarped by design
+            ),
+            # Unwarped robust PCA (threshold) t-tests
+            f"robust_pca_{thr}_ttest": (
+                getattr(self, f"ttest_robust_pca_{thr}_unwarped", {}),
+                {}  # only unwarped by design
+            ),
         }
         for name, (unw, w) in outputs.items():
             for suffix, d in (("_unwarped", unw), ("_warped", w)):
@@ -1020,7 +1200,8 @@ class RNNLatentProcessor:
         compute_second_derivative=False,
         derivative_source="threshold",
         return_derivatives=True,
-        save_outputs=False
+        save_outputs=False, 
+        compute_ttest: bool = False, # adding the internal ttest back
     ):
         """
         Full pipeline: preprocess, PCA, warp, and save.
@@ -1059,6 +1240,10 @@ class RNNLatentProcessor:
         # PCA full
         pca_full_unw = self.robust_pca_full_unwarped
         pca_full_w = self.robust_pca_full_warped if return_derivatives else {}
+        
+        # MWU half-split (aka ttest) on unwarped raw + robust PCA threshold
+        if compute_ttest:
+            self.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # params for this. See internal flags for passing fr thresh. 
 
         # Derivatives
         fd_unw = getattr(self, f"first_derivatives_{thresh}_unwarped", {}) if compute_first_derivative else {}

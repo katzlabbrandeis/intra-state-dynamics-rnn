@@ -3,6 +3,7 @@ Blech_intra_state_dynamics README
 Output by: Vincent Calia-Bogan
 This repo is a work in progress.
 
+> NOTE: if you're accessing this under the branch "staging-integration", certain scripts **WILL NOT** be integrated into the described 'bid' cli tool, and are more manual in nature.
 
 # Initialization (one-time) & Running
 
