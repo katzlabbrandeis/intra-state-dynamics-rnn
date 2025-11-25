@@ -6,7 +6,7 @@ Created on Thu Feb 29 13:07:31 2024
 #########################
 
 THIS SHIT IS COMMENTED BECAUSE IT'S THE ACTIVE CONSTRUCTION ZONE
-GO AWAYYYY DON'T LOOK AT THIS! 
+GO AWAYYYY DON'T LOOK AT THIS!
 
 
 #########################
@@ -17,19 +17,51 @@ At this point, this script is just kinda where I'm building all sorts of stuff..
 This needs to be orchestration, ultimately-- thinking I'm gonna split into a few files.
 
 
-When finished working on this, uncomment everything 
+When finished working on this, uncomment everything
 
 
 
 
 @author: vincentcalia-bogan
 """
+from core.utils.unpkl_generator import extract_valid_changepoints, unpickle_changepoints  # done
+from core.utils.spike_train_to_npz import extract_to_npz, find_h5_files  # done
+from core.utils.extract_npz import extract_from_npz  # done
+from core.pre_processing.RNNLatentprocessing import (
+    RNNLatentProcessor,  # big class processing the RNN stuff itself, pushed and done
+)
+from core.io.import_paths import ensure_src_on_path
+from spike_raster_class_plot_april import SpikeRasterPlotter  # assumes the class is in this module
+from sig_testing_class import SignificanceTester_test
+from serialize_overlap import create_overlap_dataframes, serialized_neuron_df  # deprecated? ish?
+from RNN_lat_spike_train_corr import latent_spike_train_correlation
+from read_parquets import all_nrns_to_df, read_parquet_files_into_dict  # pushed and done
+from PLTPipeline import PlottingPipeline
+from load_std_changepoints_from_pkl import load_standardized_changepoints  # helper func # done
+from generate_parquet_sig_all import (
+    consolidate_all_neuron_data,
+    consolidate_all_neuron_war_data,
+    sig_neurons_hz,
+    sig_neurons_ttest,
+    sig_neurons_war_hz,
+    sig_neurons_war_ttest,
+)
+from generate_parquet_sig_all import NeuronSignificanceTester  # really only do this on rr neurons right now
+from FRPipeline import FRPipeline  # new and improved firing rate and spiking processor-- does warped and unwarped
+from freuqency_analysis_suite_rnn_class import FrequencyAnalysisPipeline  # again now its own class
+from FRDataProcessingWrappter import (
+    FRDataProcessor,  # now deprecated; a resource-intensive conversion that doesn't work anyways
+)
+from find_extract_info import find_copy_h5info, modify_tastes, process_info_files  # pushed and done
+from calc_fr_class_war_unwar import CalcFRStates  # now deprecated
+import os
+import os.path
+
 ## NON-VINCENT MODULE IMPORTS ##
 # 17 datasets 365 neurons total
 import sys
 from pathlib import Path
-import os
-import os.path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -50,44 +82,12 @@ def _add_src_to_path() -> str:
 
 _add_src_to_path()
 
-# line needed to make the old stuff work with the new stuff for loading all this hooey 
+# line needed to make the old stuff work with the new stuff for loading all this hooey
 sys.path.append('/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/underlying functions')
 
 
-from spike_raster_class_plot_april import SpikeRasterPlotter  # assumes the class is in this module
-from freuqency_analysis_suite_rnn_class import FrequencyAnalysisPipeline  # again now its own class
-from RNN_lat_spike_train_corr import latent_spike_train_correlation
-from sig_testing_class import SignificanceTester_test
-from PLTPipeline import PlottingPipeline
-from generate_parquet_sig_all import NeuronSignificanceTester  # really only do this on rr neurons right now
-# rnn latent processing from underlying_functions 
+# rnn latent processing from underlying_functions
 # from RNNLatentprocessing import RNNLatentProcessor  # big class processing the RNN stuff itself
-from FRPipeline import (
-    FRPipeline,  # new and improved firing rate and spiking processor-- does warped and unwarped # done
-)
-from core.utils.unpkl_generator import extract_valid_changepoints, unpickle_changepoints  # done
-from core.utils.spike_train_to_npz import extract_to_npz, find_h5_files  # done
-from core.utils.extract_npz import extract_from_npz  # done
-from core.io.import_paths import ensure_src_on_path
-
-from serialize_overlap import create_overlap_dataframes, serialized_neuron_df  # deprecated? ish?
-from core.pre_processing.RNNLatentprocessing import RNNLatentProcessor  # big class processing the RNN stuff itself, pushed and done
-from read_parquets import all_nrns_to_df, read_parquet_files_into_dict  # pushed and done
-from load_std_changepoints_from_pkl import load_standardized_changepoints  # helper func # done
-from generate_parquet_sig_all import (
-    consolidate_all_neuron_data,
-    consolidate_all_neuron_war_data,
-    sig_neurons_hz,
-    sig_neurons_ttest,
-    sig_neurons_war_hz,
-    sig_neurons_war_ttest,
-)
-from FRPipeline import FRPipeline  # new and improved firing rate and spiking processor-- does warped and unwarped
-from FRDataProcessingWrappter import (
-    FRDataProcessor,  # now deprecated; a resource-intensive conversion that doesn't work anyways
-)
-from find_extract_info import find_copy_h5info, modify_tastes, process_info_files  # pushed and done
-from calc_fr_class_war_unwar import CalcFRStates  # now deprecated
 
 
 # project_dir = "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work"
@@ -339,13 +339,13 @@ for _ in range(use_xarray):
     )
     print('Use xarray has been set to true. Processing entire object')
     (fr_unwar_xr,
-      spikes_unwar_xr,
-      fr_war_xr,
-      spikes_war_xr,
-      fr_unwar_df,
-      spikes_unwar_df,
-      fr_war_df,
-      spikes_war_df, ) = FRprocessor.run_full()
+     spikes_unwar_xr,
+     fr_war_xr,
+     spikes_war_xr,
+     fr_unwar_df,
+     spikes_unwar_df,
+     fr_war_df,
+     spikes_war_df, ) = FRprocessor.run_full()
 ########### FRPipeline_lite designed to work with RNNLatentprocessing... ##########
 
 # from FRPipeline import FRPipeline_lite
@@ -390,7 +390,7 @@ RNNprocessor = RNNLatentProcessor(
     warp_length=1000,
     variance_threshold=95.0,
 )
-# additional optional bits: 
+# additional optional bits:
 # (defaults: enforce_fr_threshold=True, fr_threshold_hz=1.0)
 RNNprocessor.enforce_fr_threshold = True   # set False to disable the 1 Hz gate
 RNNprocessor.fr_threshold_hz = 1.0  # in hz
@@ -425,17 +425,18 @@ else:
         compute_second_derivative=True,
         derivative_source="threshold",
         return_derivatives=True,
-        save_outputs=True, # have false for some reason? idrk 
-        compute_ttest=True,# will throw errors about not having warped/unwarped data; 
-        # this is because it's being fed latents 
+        save_outputs=True,  # have false for some reason? idrk
+        compute_ttest=True,  # will throw errors about not having warped/unwarped data;
+        # this is because it's being fed latents
     )
     changepoints_dict = RNNprocessor.extract_changepoints_dict(save_outputs=True)  # do not use this directly
     standardized_changepoints_dict = {
         key.replace("dataset_", "").split("_repacked.npz")[0]: value
         for key, value in RNNprocessor.changepoints_dict.items()
     }
-    # ensuring the ttest runs: 
-    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # !!! call to force ttest properly-- has to be done after. 
+    # ensuring the ttest runs:
+    # !!! call to force ttest properly-- has to be done after.
+    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4)
     RNNprocessor.save_analysis_outputs(RNN_OUT_DIR)
 
 # ATTEMPTING TO FEED THROUGH LITE RR FR DATA ####################3
@@ -550,7 +551,8 @@ else:
         return_derivatives=True,
         save_outputs=True,
     )
-    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # !!! call to force ttest properly-- has to be done after. 
+    # !!! call to force ttest properly-- has to be done after.
+    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4)
     RNNprocessor.save_analysis_outputs(RR_SAVE_DIR)
     changepoints_dict = RNNprocessor.extract_changepoints_dict(save_outputs=True)
     standardized_changepoints_dict = {
@@ -626,8 +628,9 @@ else:
         return_derivatives=True,
         save_outputs=True,
     )
-    # specifically for running the MWU ttest: 
-    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # !!! call to force ttest properly-- has to be done after. 
+    # specifically for running the MWU ttest:
+    # !!! call to force ttest properly-- has to be done after.
+    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4)
     RNNprocessor.save_analysis_outputs(JULY_SAVE_DIR)
 
     changepoints_dict = RNNprocessor.extract_changepoints_dict(save_outputs=True)  # do not use this raw
@@ -740,9 +743,10 @@ else:
         compute_second_derivative=True,
         derivative_source="threshold",
         return_derivatives=True,
-        save_outputs=True, 
+        save_outputs=True,
     )
-    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # !!! call to force ttest properly-- has to be done after. 
+    # !!! call to force ttest properly-- has to be done after.
+    RNNprocessor.run_mwu_halfsplit(alpha=0.05, min_total_n=4)
     RNNprocessor.save_analysis_outputs(FR_SAVE_DIR)
     changepoints_dict = RNNprocessor.extract_changepoints_dict(save_outputs=True)
     standardized_changepoints_dict = {
@@ -782,7 +786,8 @@ pltpipeline = PlottingPipeline(
 # 4) Run it—this will detect “_warped” in the keys and call your scatter‐metric plot:
 pltpipeline.run(fr_war_dict)
 # testing ttest
-ttest = read_parquet_files_into_dict("/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/RNN_PROCESSING_PARQUETS/robust_pca_95_ttest_warped")
+ttest = read_parquet_files_into_dict(
+    "/Users/vincentcalia-bogan/Desktop/1BRANDEIS MAJOR STUFF/Katz lab/Senior thesis work/RNN_PROCESSING_PARQUETS/robust_pca_95_ttest_warped")
 pltpipeline.plot_ttest_venn(ttest)
 
 # for the newer rnn (july):
@@ -879,28 +884,28 @@ corrprocessor.plot_correlation_heatmaps_parallel(
     max_trials_per_fig=5        # chunk to 5 trials per plot
 )
 corrprocessor.plot_correlation_histograms_parallel(corr_dict=correlation_results,
-                                                    metric="pearson_r",
-                                                    n_bins=30,
-                                                    density=False,
-                                                    max_trials_per_fig=5,
-                                                    n_jobs=4,
-                                                    share_bin_range=True,
-                                                    use_abs=False,
-                                                    show_zero=True,
-                                                    show_mean=False,
-                                                    show_median=False
-                                                    )
+                                                   metric="pearson_r",
+                                                   n_bins=30,
+                                                   density=False,
+                                                   max_trials_per_fig=5,
+                                                   n_jobs=4,
+                                                   share_bin_range=True,
+                                                   use_abs=False,
+                                                   show_zero=True,
+                                                   show_mean=False,
+                                                   show_median=False
+                                                   )
 # now the raster plot business:
 # to be run on a lighter-ram process, as this is enormously memory intenseive for some reason
 corrprocessor.plot_pc_raster_overlay(corr_dict=correlation_results,
-                                      start_time=1500,
-                                      end_time=4400,
-                                      spearman_abs_thresh=0.20,  # adjust to proper thresholding at some point
-                                      pearson_abs_thresh=0.20,  # have to adjust to proper thresholding
-                                      sign_source="spearman",  # "spearman", "pearson", "auto" is spearman
-                                      max_pcs_per_fig=4,
-                                      stim_time_ms=2000,
-                                      force_show_all_neurons=True)
+                                     start_time=1500,
+                                     end_time=4400,
+                                     spearman_abs_thresh=0.20,  # adjust to proper thresholding at some point
+                                     pearson_abs_thresh=0.20,  # have to adjust to proper thresholding
+                                     sign_source="spearman",  # "spearman", "pearson", "auto" is spearman
+                                     max_pcs_per_fig=4,
+                                     stim_time_ms=2000,
+                                     force_show_all_neurons=True)
 
 
 ####################################

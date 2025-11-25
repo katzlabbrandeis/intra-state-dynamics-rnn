@@ -130,9 +130,8 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import polars as pl
 from scipy.interpolate import interp1d
-from sklearn.decomposition import PCA
 from scipy.stats import mannwhitneyu  # for the internal ttesting that is taking place
-
+from sklearn.decomposition import PCA
 
 # specialized imports
 # note: must move these to utils
@@ -188,7 +187,6 @@ class RNNLatentProcessor:
         self.is_latent: bool = False
         self.is_neuron: bool = False
         self.is_rr_fr: bool = False  # special neuron naming for "rr_firing" datasets
-        
 
         # unwarped outputs
         self.epoch_dataframes_dict_unwarped: Dict[str, pl.DataFrame] = {}
@@ -199,8 +197,8 @@ class RNNLatentProcessor:
         # t-test (MWU) outputs (only unwarped-- not applicable to warped data)
         self.ttest_raw_output_unwarped: Dict[str, pl.DataFrame] = {}
         # MWU internal flags
-        self.enforce_fr_threshold: bool= True # firing rate gate on MWU for neuron_ dims (not for pca or latents)
-        self.fr_threshold_hz: float = 1.0 # firing rate threshold for this; mean across the state. 
+        self.enforce_fr_threshold: bool = True  # firing rate gate on MWU for neuron_ dims (not for pca or latents)
+        self.fr_threshold_hz: float = 1.0  # firing rate threshold for this; mean across the state.
 
         # warped outputs
         self.epoch_dataframes_dict_warped: Dict[str, pl.DataFrame] = {}
@@ -912,7 +910,7 @@ class RNNLatentProcessor:
 
         return (pca_lat_dict_thresh, pca_lat_dict_full) if return_dicts else None
     # ----------------------------------------------------------------------------
-    # MWU half-split -- literally splits the first and second half 
+    # MWU half-split -- literally splits the first and second half
     # of a state and compares them using non-poarametric ttest. (added as of 9.29)
     # ----------------------------------------------------------------------------
 
@@ -927,15 +925,15 @@ class RNNLatentProcessor:
             c for c in df.columns
             if c.startswith("PC_") or c.startswith("latent_dim_") or c.startswith("neuron_")
         ]
-    
+
     def _compute_mwu_halfsplit_segment(
         self,
         seg: pl.DataFrame,
         dims: list[str],
         *,
         alpha: float = 0.05,
-        min_total_n: int = 4, # so that there are comparison points with some sort of variance
-        enforce_fr_threshold: Optional[bool] = None, 
+        min_total_n: int = 4,  # so that there are comparison points with some sort of variance
+        enforce_fr_threshold: Optional[bool] = None,
         fr_threshold_hz: Optional[float] = None,
     ) -> pl.DataFrame:
         """
@@ -944,13 +942,13 @@ class RNNLatentProcessor:
             mwu_p_<dim>, mwu_delta_<dim>, mwu_sig_<dim>
         Values are repeated down all rows of the segment (PCA explained-variance style).
         """
-        if enforce_fr_threshold is None: 
+        if enforce_fr_threshold is None:
             enforce_fr_threshold = getattr(self, "enforce_fr_threshold", False)
-        if fr_threshold_hz is None: 
+        if fr_threshold_hz is None:
             fr_threshold_hz = getattr(self, "fr_threshold_hz", 1.0)
         n = seg.height
         out_series = []
-    
+
         # If too short, emit NaN/False columns but preserve shape
         if n < min_total_n:
             for d in dims:
@@ -960,13 +958,13 @@ class RNNLatentProcessor:
                     pl.Series(f"mwu_sig_{d}",   [False] * n),
                 ]
             return seg.with_columns(out_series)
-    
+
         # Split (odd -> ceil on second half)
         n1 = n // 2
         X = seg.select(dims).to_numpy()
         A = X[:n1, :]
         B = X[n1:, :]
-    
+
         for j, d in enumerate(dims):
             # --- NEW: firing-rate gate for neuron_* columns-- basic 1Hz threshold ---
             if enforce_fr_threshold and d.startswith("neuron_"):
@@ -981,11 +979,11 @@ class RNNLatentProcessor:
                     continue
             a = A[:, j]
             b = B[:, j]
-    
+
             # Drop NaNs
             a = a[~np.isnan(a)]
             b = b[~np.isnan(b)]
-    
+
             if (a.size < 2) or (b.size < 2):
                 p, delta, sig = np.nan, np.nan, False
             elif (np.nanvar(a) == 0.0) or (np.nanvar(b) == 0.0):
@@ -998,15 +996,15 @@ class RNNLatentProcessor:
                 # Cliff's delta via U (in [-1, 1])
                 delta = (2.0 * U) / (a.size * b.size) - 1.0
                 sig = (p < alpha)
-    
+
             out_series += [
                 pl.Series(f"mwu_p_{d}",     [p] * n),
                 pl.Series(f"mwu_delta_{d}", [delta] * n),
                 pl.Series(f"mwu_sig_{d}",   [sig] * n),
             ]
-    
+
         return seg.with_columns(out_series)
-    
+
     def compute_mwu_halfsplit_for_df(
         self,
         df: pl.DataFrame,
@@ -1021,7 +1019,7 @@ class RNNLatentProcessor:
         dims = self._get_signal_cols_any(df)
         if not dims:
             return df
-    
+
         augmented = []
         for t in df["taste"].unique().to_list():
             dft = df.filter(pl.col("taste") == t)
@@ -1035,9 +1033,9 @@ class RNNLatentProcessor:
                         seg, dims, alpha=alpha, min_total_n=min_total_n
                     )
                     augmented.append(seg_aug)
-    
+
         return pl.concat(augmented) if augmented else df
-    
+
     def run_mwu_halfsplit(self, *, alpha: float = 0.05, min_total_n: int = 4) -> None:
         """
         Compute MWU half-split ONLY for:
@@ -1046,7 +1044,7 @@ class RNNLatentProcessor:
           - unwarped robust PCA threshold (robust_pca_{thr}_unwarped)
           - Note: this can also be firing rate data
           - Only takes unwarped pca/non pca'd data; the SOURCE of that data
-          - can be firing rate, latents, or whatever else. 
+          - can be firing rate, latents, or whatever else.
         Stores results in:
           - self.ttest_raw_output_unwarped
           - self.ttest_robust_pca_{thr}_unwarped  (via setattr)
@@ -1060,7 +1058,7 @@ class RNNLatentProcessor:
                 df, alpha=alpha, min_total_n=min_total_n
             )
         self.ttest_raw_output_unwarped = raw_out
-    
+
         # 2) Robust PCA (thresholded, unwarped)
         thr = int(self.variance_threshold)
         pca_key_unw = f"robust_pca_{thr}_unwarped"
@@ -1071,7 +1069,6 @@ class RNNLatentProcessor:
                 df, alpha=alpha, min_total_n=min_total_n
             )
         setattr(self, f"ttest_robust_pca_{thr}_unwarped", pca_out)
-
 
     # -------------------------------------------------------------------------
     # Numeric helpers
@@ -1200,8 +1197,8 @@ class RNNLatentProcessor:
         compute_second_derivative=False,
         derivative_source="threshold",
         return_derivatives=True,
-        save_outputs=False, 
-        compute_ttest: bool = False, # adding the internal ttest back
+        save_outputs=False,
+        compute_ttest: bool = False,  # adding the internal ttest back
     ):
         """
         Full pipeline: preprocess, PCA, warp, and save.
@@ -1240,10 +1237,11 @@ class RNNLatentProcessor:
         # PCA full
         pca_full_unw = self.robust_pca_full_unwarped
         pca_full_w = self.robust_pca_full_warped if return_derivatives else {}
-        
+
         # MWU half-split (aka ttest) on unwarped raw + robust PCA threshold
         if compute_ttest:
-            self.run_mwu_halfsplit(alpha=0.05, min_total_n=4) # params for this. See internal flags for passing fr thresh. 
+            # params for this. See internal flags for passing fr thresh.
+            self.run_mwu_halfsplit(alpha=0.05, min_total_n=4)
 
         # Derivatives
         fd_unw = getattr(self, f"first_derivatives_{thresh}_unwarped", {}) if compute_first_derivative else {}
