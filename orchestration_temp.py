@@ -24,36 +24,6 @@ When finished working on this, uncomment everything
 
 @author: vincentcalia-bogan
 """
-from core.utils.unpkl_generator import extract_valid_changepoints, unpickle_changepoints  # done
-from core.utils.spike_train_to_npz import extract_to_npz, find_h5_files  # done
-from core.utils.extract_npz import extract_from_npz  # done
-from core.pre_processing.RNNLatentprocessing import (
-    RNNLatentProcessor,  # big class processing the RNN stuff itself, pushed and done
-)
-from core.io.import_paths import ensure_src_on_path
-from spike_raster_class_plot_april import SpikeRasterPlotter  # assumes the class is in this module
-from sig_testing_class import SignificanceTester_test
-from serialize_overlap import create_overlap_dataframes, serialized_neuron_df  # deprecated? ish?
-from RNN_lat_spike_train_corr import latent_spike_train_correlation
-from read_parquets import all_nrns_to_df, read_parquet_files_into_dict  # pushed and done
-from PLTPipeline import PlottingPipeline
-from load_std_changepoints_from_pkl import load_standardized_changepoints  # helper func # done
-from generate_parquet_sig_all import (
-    consolidate_all_neuron_data,
-    consolidate_all_neuron_war_data,
-    sig_neurons_hz,
-    sig_neurons_ttest,
-    sig_neurons_war_hz,
-    sig_neurons_war_ttest,
-)
-from generate_parquet_sig_all import NeuronSignificanceTester  # really only do this on rr neurons right now
-from FRPipeline import FRPipeline  # new and improved firing rate and spiking processor-- does warped and unwarped
-from freuqency_analysis_suite_rnn_class import FrequencyAnalysisPipeline  # again now its own class
-from FRDataProcessingWrappter import (
-    FRDataProcessor,  # now deprecated; a resource-intensive conversion that doesn't work anyways
-)
-from find_extract_info import find_copy_h5info, modify_tastes, process_info_files  # pushed and done
-from calc_fr_class_war_unwar import CalcFRStates  # now deprecated
 import os
 import os.path
 
@@ -67,6 +37,37 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xarray as xr
+from calc_fr_class_war_unwar import CalcFRStates  # now deprecated
+from find_extract_info import find_copy_h5info, modify_tastes, process_info_files  # pushed and done
+from FRDataProcessingWrappter import (
+    FRDataProcessor,  # now deprecated; a resource-intensive conversion that doesn't work anyways
+)
+from freuqency_analysis_suite_rnn_class import FrequencyAnalysisPipeline  # again now its own class
+from FRPipeline import FRPipeline  # new and improved firing rate and spiking processor-- does warped and unwarped
+from generate_parquet_sig_all import NeuronSignificanceTester  # really only do this on rr neurons right now
+from generate_parquet_sig_all import (
+    consolidate_all_neuron_data,
+    consolidate_all_neuron_war_data,
+    sig_neurons_hz,
+    sig_neurons_ttest,
+    sig_neurons_war_hz,
+    sig_neurons_war_ttest,
+)
+from load_std_changepoints_from_pkl import load_standardized_changepoints  # helper func # done
+from PLTPipeline import PlottingPipeline
+from read_parquets import all_nrns_to_df, read_parquet_files_into_dict  # pushed and done
+from RNN_lat_spike_train_corr import latent_spike_train_correlation
+from serialize_overlap import create_overlap_dataframes, serialized_neuron_df  # deprecated? ish?
+from sig_testing_class import SignificanceTester_test
+from spike_raster_class_plot_april import SpikeRasterPlotter  # assumes the class is in this module
+
+from core.io.import_paths import ensure_src_on_path
+from core.pre_processing.RNNLatentprocessing import (
+    RNNLatentProcessor,  # big class processing the RNN stuff itself, pushed and done
+)
+from core.utils.extract_npz import extract_from_npz  # done
+from core.utils.spike_train_to_npz import extract_to_npz, find_h5_files  # done
+from core.utils.unpkl_generator import extract_valid_changepoints, unpickle_changepoints  # done
 
 
 def _add_src_to_path() -> str:
