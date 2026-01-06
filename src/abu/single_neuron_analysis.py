@@ -11,6 +11,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 from pprint import pprint as pp
+from scipy.stats import ttest_rel
 
 tqdm.pandas()
 
@@ -22,6 +23,13 @@ from pytau.changepoint_analysis import get_state_snippets
 cp_file_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/pkl_files/tau_frame.pkl'
 tau_frame = pd.read_pickle(cp_file_path)
 
+##############################
+base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
+artifacts_sup_dir = os.path.join(base_dir, 'output', 'artifacts')
+artifacts_dir = os.path.join(artifacts_sup_dir, 'single_neuron_analysis')
+plot_dir = os.path.join(base_dir, 'output', 'plots', 'single_neuron_analysis')
+os.makedirs(plot_dir, exist_ok=True)
+os.makedirs(artifacts_dir, exist_ok=True)
 ##############################
 # Get spike-trains
 
@@ -109,3 +117,44 @@ def mean_rate_halves(row):
     return pd.Series({'mean_rate_first_half': mean_rate_first_half, 'mean_rate_last_half': mean_rate_last_half})
 
 state_snippet_df[['mean_rate_first_half', 'mean_rate_last_half']] = state_snippet_df.progress_apply(mean_rate_halves, axis=1)
+
+# Write intermediate DataFrame to artifact
+intermediate_artifact_path = os.path.join(artifacts_dir, 'state_snippet_frame.pkl')
+state_snippet_df.to_pickle(intermediate_artifact_path)
+
+# For each basenames, taste_num, state_ind, neuron_ind: perform paired t-test across trials
+def paired_t_test(group):
+    # Drop NaN values
+    group = group.dropna(subset=['mean_rate_first_half', 'mean_rate_last_half'])
+    if len(group) < 2:
+        return pd.Series({'t_stat': np.nan, 'p_value': np.nan})
+    
+    t_stat, p_value = ttest_rel(group['mean_rate_first_half'], group['mean_rate_last_half'])
+
+    mean_rate = np.mean(group[['mean_rate_first_half', 'mean_rate_last_half']].values.flatten())
+
+    return pd.Series({'t_stat': t_stat, 'p_value': p_value, 'mean_rate': mean_rate})
+
+paired_test_results = \
+        state_snippet_df.groupby(['basename', 'taste_num', 'state_ind', 'neuron_ind']).progress_apply(paired_t_test).reset_index()
+
+# Calculate number of repeated measures for each neuron (tastes and states)
+def count_repeated_measures(group):
+    return len(group)
+repeated_measures = \
+    paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(count_repeated_measures).reset_index(name='n_repeated_measures')
+
+# Merge so we can calculate corrected alpha
+paired_test_results = paired_test_results.merge(repeated_measures, on=['basename', 'neuron_ind'])
+# Bonferroni correction for multiple comparisons per neuron
+paired_test_results['corrected_alpha'] = 0.05 / paired_test_results['n_repeated_measures']
+
+# Convert mean_rate to Hz (current bins are 1ms)
+paired_test_results['mean_rate_Hz'] = paired_test_results['mean_rate'] * 1000
+
+# Save results as artifact
+paired_test_artifact_path = os.path.join(artifacts_dir, 'paired_test_results.pkl')
+paired_test_results.to_pickle(paired_test_artifact_path)
+
+############################################################
+# Make plots
