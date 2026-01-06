@@ -181,7 +181,8 @@ paired_test_results['sig'] = paired_test_results['p_value'] < paired_test_result
 def neuron_significance(group):
     any_sig = group['sig'].any()
     lowest_p = group['p_value'].min()
-    return pd.Series({'any_significant': any_sig, 'lowest_p_value': lowest_p})
+    n_sig = group['sig'].sum()
+    return pd.Series({'any_significant': any_sig, 'lowest_p_value': lowest_p, 'n_significant_states': n_sig})
 neuron_sig_results = \
     paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(neuron_significance).reset_index()
 
@@ -225,7 +226,7 @@ plt.close(fig)
 # For each neuron, plot both warped and unwarped firing rates for all states for a single taste
 n_plots = 20
 # Sort by highest mean firing rate and significance
-sorted_neurons = neuron_sig_results.sort_values(by=['lowest_p_value', 'mean_rate_Hz'], ascending=[True, False]).head(n_plots)
+sorted_neurons = neuron_sig_results.sort_values(by=['n_significant_states', 'mean_rate_Hz'], ascending=False).head(n_plots) 
 
 wanted_snippets = state_snippet_df.merge(
     sorted_neurons[['basename', 'neuron_ind']],
@@ -237,6 +238,9 @@ grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'
 this_plot_dir = os.path.join(plot_dir, 'rate_plots') 
 os.makedirs(this_plot_dir, exist_ok=True)
 
+# Plot, cols = states
+# 1) top row = unwapred firing rates
+# 2) bottom row = warped firing rates + mean warped rate
 bin_size = 50  # in ms
 for (basename, neuron_ind, taste_num), group in grouped_snippets:
     for this_state in group.state_ind.unique():
@@ -279,9 +283,6 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
         warped_firing_rates = np.array(warped_firing_rates)
         mean_warped_rate = np.nanmean(warped_firing_rates, axis=0)
         
-        # Plot
-        # 1) top row = unwapred firing rates
-        # 2) bottom row = warped firing rates + mean warped rate
         fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
         # Unwarped
         for trial_rate in spike_data_list:
