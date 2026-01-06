@@ -238,12 +238,22 @@ grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'
 this_plot_dir = os.path.join(plot_dir, 'rate_plots') 
 os.makedirs(this_plot_dir, exist_ok=True)
 
-# Plot, cols = states
-# 1) top row = unwapred firing rates
-# 2) bottom row = warped firing rates + mean warped rate
+# Plot layout: rows = (unwarped, warped), columns = states
 bin_size = 50  # in ms
 for (basename, neuron_ind, taste_num), group in grouped_snippets:
-    for this_state in group.state_ind.unique():
+    states = sorted(group.state_ind.unique())
+    n_states = len(states)
+    
+    # Create subplot grid: 2 rows (unwarped, warped) x n_states columns
+    fig, axs = plt.subplots(2, n_states, figsize=(4*n_states, 6), sharey='row')
+    
+    # Handle case where there's only one state
+    if n_states == 1:
+        axs = axs.reshape(2, 1)
+    
+    # Process each state
+    state_data = {}
+    for col_idx, this_state in enumerate(states):
         state_group = group[group['state_ind'] == this_state]
         # Get spike_data as list of arrays
         spike_data_list = state_group['spike_data'].tolist()
@@ -256,20 +266,20 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
             binned_spike_data_list.append(binned)
 
         # Smooth firing rates with Savitzky-Golay filter
-        spike_data_list = []
+        smoothed_spike_data_list = []
         for arr in binned_spike_data_list:
             if len(arr) < 5:
                 smoothed = arr
             else:
                 smoothed = savgol_filter(arr, window_length=5, polyorder=2)
-            spike_data_list.append(smoothed)
+            smoothed_spike_data_list.append(smoothed)
         
         # Warp firing rates to mean length
-        lengths = [len(arr) for arr in spike_data_list]
+        lengths = [len(arr) for arr in smoothed_spike_data_list]
         mean_length = int(np.mean(lengths))
         
         warped_firing_rates = []
-        for arr in spike_data_list:
+        for arr in smoothed_spike_data_list:
             if len(arr) < 2:
                 warped = np.full(mean_length, np.nan)
             else:
@@ -283,24 +293,29 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
         warped_firing_rates = np.array(warped_firing_rates)
         mean_warped_rate = np.nanmean(warped_firing_rates, axis=0)
         
-        fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-        # Unwarped
-        for trial_rate in spike_data_list:
-            axs[0].plot(trial_rate, color='gray', alpha=0.5)
-        axs[0].set_title(f'Unwarped Firing Rates\n{basename} Neuron {neuron_ind} Taste {taste_num} State {this_state}')
-        axs[0].set_ylabel('Firing Rate (spikes/ms)')
-        # Warped
+        # Plot unwarped firing rates (top row)
+        for trial_rate in smoothed_spike_data_list:
+            axs[0, col_idx].plot(trial_rate, color='gray', alpha=0.5)
+        axs[0, col_idx].set_title(f'State {this_state}')
+        if col_idx == 0:
+            axs[0, col_idx].set_ylabel('Firing Rate (spikes/ms)')
+        
+        # Plot warped firing rates (bottom row)
         for trial_rate in warped_firing_rates:
-            axs[1].plot(trial_rate, color='gray', alpha=0.5)
-        axs[1].plot(mean_warped_rate, color='red', linewidth=2, label='Mean Warped Rate')
-        axs[1].set_title('Warped Firing Rates')
-        axs[1].set_xlabel('Warped Time Bins')
-        axs[1].set_ylabel('Firing Rate (spikes/ms)')
-        axs[1].legend()
-        plt.tight_layout()
-        plot_path = os.path.join(
-            this_plot_dir,
-            f'{basename}_neuron_{neuron_ind}_taste_{taste_num}_state_{this_state}_firing_rates.svg'
-        )
-        plt.savefig(plot_path, bbox_inches='tight')
-        plt.close(fig)
+            axs[1, col_idx].plot(trial_rate, color='gray', alpha=0.5)
+        axs[1, col_idx].plot(mean_warped_rate, color='red', linewidth=2, label='Mean' if col_idx == 0 else '')
+        axs[1, col_idx].set_xlabel('Warped Time Bins')
+        if col_idx == 0:
+            axs[1, col_idx].set_ylabel('Firing Rate (spikes/ms)')
+            axs[1, col_idx].legend()
+    
+    # Add overall title
+    fig.suptitle(f'{basename} Neuron {neuron_ind} Taste {taste_num}\nTop: Unwarped, Bottom: Warped', fontsize=14)
+    plt.tight_layout()
+    
+    plot_path = os.path.join(
+        this_plot_dir,
+        f'{basename}_neuron_{neuron_ind}_taste_{taste_num}_all_states_firing_rates.svg'
+    )
+    plt.savefig(plot_path, bbox_inches='tight')
+    plt.close(fig)
