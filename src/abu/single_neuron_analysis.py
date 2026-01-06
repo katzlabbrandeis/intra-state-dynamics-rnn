@@ -14,6 +14,7 @@ from pprint import pprint as pp
 from scipy.stats import ttest_rel
 from matplotlib_venn import venn3, venn3_circles, venn3_unweighted
 import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
 
 tqdm.pandas()
 
@@ -51,11 +52,13 @@ spike_train_dict = {k: v[list(v.files)[0]] for k, v in spike_train_dict.items()}
 
 ##############################
 # Get state snippets for all neurons
+time_lims = [2000, 4000]
 state_snippet_list = []
 for ind, row in tqdm(tau_frame.iterrows()):
     session_name = row['basename']
     # Shape: (trials, changepoints)
     change_points = row['tau']
+    change_points -= time_lims[0]  # adjust to start at 0
     
     if np.isnan(change_points).all():
         print(f"Skipping {session_name} taste {row['taste_num']} due to all NaN change points")
@@ -64,6 +67,8 @@ for ind, row in tqdm(tau_frame.iterrows()):
     taste_ind = row['taste_num']
     # Shape: (trials, neurons, time)
     spike_trains = spike_train_dict[session_name][int(taste_ind)]
+    # Cut to time_lims
+    spike_trains = spike_trains[:, :, time_lims[0]:time_lims[1]]
     # get_state_snippets(spike_array, tau_array)
     # Extract neural activity snippets for each state and trial without averaging
     # 
@@ -165,13 +170,18 @@ if 'paired_test_results' not in globals():
     paired_test_artifact_path = os.path.join(artifacts_dir, 'paired_test_results.pkl')
     paired_test_results = pd.read_pickle(paired_test_artifact_path)
 
+if 'state_snippet_df' not in globals():
+    intermediate_artifact_path = os.path.join(artifacts_dir, 'state_snippet_frame.pkl')
+    state_snippet_df = pd.read_pickle(intermediate_artifact_path)
+
 
 paired_test_results['sig'] = paired_test_results['p_value'] < paired_test_results['corrected_alpha']
 
 # For each neuron, check if any state shows significant change
 def neuron_significance(group):
     any_sig = group['sig'].any()
-    return pd.Series({'any_significant': any_sig})
+    lowest_p = group['p_value'].min()
+    return pd.Series({'any_significant': any_sig, 'lowest_p_value': lowest_p})
 neuron_sig_results = \
     paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(neuron_significance).reset_index()
 
@@ -209,4 +219,87 @@ venn_plot_path = os.path.join(plot_dir, 'single_neuron_analysis_venn.svg')
 plt.savefig(venn_plot_path, bbox_inches='tight')
 plt.close(fig)
 
+###############
+# Plot traces of warped firing rates for significant neurons
 
+# For each neuron, plot both warped and unwarped firing rates for all states for a single taste
+n_plots = 20
+# Sort by highest mean firing rate and significance
+sorted_neurons = neuron_sig_results.sort_values(by=['lowest_p_value', 'mean_rate_Hz'], ascending=[True, False]).head(n_plots)
+
+wanted_snippets = state_snippet_df.merge(
+    sorted_neurons[['basename', 'neuron_ind']],
+    on=['basename', 'neuron_ind']
+)
+
+grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'])
+
+this_plot_dir = os.path.join(plot_dir, 'rate_plots') 
+os.makedirs(this_plot_dir, exist_ok=True)
+
+bin_size = 50  # in ms
+for (basename, neuron_ind, taste_num), group in grouped_snippets:
+    for this_state in group.state_ind.unique():
+        state_group = group[group['state_ind'] == this_state]
+        # Get spike_data as list of arrays
+        spike_data_list = state_group['spike_data'].tolist()
+
+        binned_spike_data_list = []
+        for arr in spike_data_list:
+            # Bin the spike data
+            n_bins = int(np.ceil(len(arr) / bin_size))
+            binned = np.array([np.mean(arr[i*bin_size:(i+1)*bin_size]) for i in range(n_bins)])
+            binned_spike_data_list.append(binned)
+
+        # Smooth firing rates with Savitzky-Golay filter
+        spike_data_list = []
+        for arr in binned_spike_data_list:
+            if len(arr) < 5:
+                smoothed = arr
+            else:
+                smoothed = savgol_filter(arr, window_length=5, polyorder=2)
+            spike_data_list.append(smoothed)
+        
+        # Warp firing rates to mean length
+        lengths = [len(arr) for arr in spike_data_list]
+        mean_length = int(np.mean(lengths))
+        
+        warped_firing_rates = []
+        for arr in spike_data_list:
+            if len(arr) < 2:
+                warped = np.full(mean_length, np.nan)
+            else:
+                warped = np.interp(
+                    np.linspace(0, len(arr)-1, mean_length),
+                    np.arange(len(arr)),
+                    arr
+                )
+            warped_firing_rates.append(warped)
+        
+        warped_firing_rates = np.array(warped_firing_rates)
+        mean_warped_rate = np.nanmean(warped_firing_rates, axis=0)
+        
+        # Plot
+        # 1) top row = unwapred firing rates
+        # 2) bottom row = warped firing rates + mean warped rate
+        fig, axs = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+        # Unwarped
+        for trial_rate in spike_data_list:
+            axs[0].plot(trial_rate, color='gray', alpha=0.5)
+        axs[0].set_title(f'Unwarped Firing Rates\n{basename} Neuron {neuron_ind} Taste {taste_num} State {this_state}')
+        axs[0].set_ylabel('Firing Rate (spikes/ms)')
+        # Warped
+        for trial_rate in warped_firing_rates:
+            axs[1].plot(trial_rate, color='gray', alpha=0.5)
+        axs[1].plot(mean_warped_rate, color='red', linewidth=2, label='Mean Warped Rate')
+        axs[1].set_title('Warped Firing Rates')
+        axs[1].set_xlabel('Warped Time Bins')
+        axs[1].set_ylabel('Firing Rate (spikes/ms)')
+        axs[1].legend()
+        plt.tight_layout()
+        plot_path = os.path.join(
+            this_plot_dir,
+            f'{basename}_neuron_{neuron_ind}_taste_{taste_num}_state_{this_state}_firing_rates.svg'
+        )
+        plt.savefig(plot_path, bbox_inches='tight')
+        plt.close(fig)
