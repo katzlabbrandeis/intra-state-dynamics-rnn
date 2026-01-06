@@ -227,11 +227,15 @@ plt.close(fig)
 n_plots = 20
 # Sort by highest mean firing rate and significance
 sorted_neurons = neuron_sig_results.sort_values(by=['n_significant_states', 'mean_rate_Hz'], ascending=False).head(n_plots) 
+# Add rank for each neuron for easier plotting
+sorted_neurons['rank'] = range(1, len(sorted_neurons) + 1)
 
 wanted_snippets = state_snippet_df.merge(
-    sorted_neurons[['basename', 'neuron_ind']],
+    sorted_neurons[['basename', 'neuron_ind', 'rank']],
     on=['basename', 'neuron_ind']
 )
+
+
 
 grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'])
 
@@ -239,13 +243,14 @@ this_plot_dir = os.path.join(plot_dir, 'rate_plots')
 os.makedirs(this_plot_dir, exist_ok=True)
 
 # Plot layout: rows = (unwarped, warped), columns = states
-bin_size = 50  # in ms
+# bin_size = 50  # in ms
+kernel_width = 100  # in ms
 for (basename, neuron_ind, taste_num), group in grouped_snippets:
     states = sorted(group.state_ind.unique())
     n_states = len(states)
     
     # Create subplot grid: 2 rows (unwarped, warped) x n_states columns
-    fig, axs = plt.subplots(2, n_states, figsize=(4*n_states, 6), sharey='row')
+    fig, axs = plt.subplots(2, n_states, figsize=(4*n_states, 6)) 
     
     # Handle case where there's only one state
     if n_states == 1:
@@ -264,6 +269,13 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
             n_bins = int(np.ceil(len(arr) / bin_size))
             binned = np.array([np.mean(arr[i*bin_size:(i+1)*bin_size]) for i in range(n_bins)])
             binned_spike_data_list.append(binned)
+            # # Smooth with boxcar kernel
+            # if len(arr) < kernel_width:
+            #     smoothed = arr
+            # else:
+            #     kernel = np.ones(kernel_width) / kernel_width
+            #     smoothed = np.convolve(arr, kernel, mode='same')
+            # binned_spike_data_list.append(smoothed)
 
         # Smooth firing rates with Savitzky-Golay filter
         smoothed_spike_data_list = []
@@ -310,12 +322,22 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
             axs[1, col_idx].legend()
     
     # Add overall title
-    fig.suptitle(f'{basename} Neuron {neuron_ind} Taste {taste_num}\nTop: Unwarped, Bottom: Warped', fontsize=14)
+    suptitle_str = f'{basename} Neuron {neuron_ind} Taste {taste_num}\nTop: Unwarped, Bottom: Warped'
+    # Also add mean firing rate info and significance info
+    neuron_info = sorted_neurons[
+        (sorted_neurons['basename'] == basename) & 
+        (sorted_neurons['neuron_ind'] == neuron_ind)
+    ].iloc[0]
+    nrn_rank = neuron_info['rank']
+
+    suptitle_str += f'\nMean Firing Rate: {neuron_info["mean_rate_Hz"]:.2f} Hz, Significant States: {neuron_info["n_significant_states"]}'
+
+    fig.suptitle(suptitle_str, fontsize=16)
     plt.tight_layout()
     
     plot_path = os.path.join(
         this_plot_dir,
-        f'{basename}_neuron_{neuron_ind}_taste_{taste_num}_all_states_firing_rates.svg'
+        f'rank{nrn_rank}_{basename}_neuron_{neuron_ind}_taste_{taste_num}_all_states_firing_rates.svg'
     )
     plt.savefig(plot_path, bbox_inches='tight')
     plt.close(fig)

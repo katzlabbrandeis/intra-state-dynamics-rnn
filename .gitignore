@@ -24,3 +24,4 @@ dist/
 output/
 __pycache__/
 /output
+.aider*
