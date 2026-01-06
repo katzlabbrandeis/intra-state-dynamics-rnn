@@ -12,6 +12,8 @@ import os
 from tqdm import tqdm
 from pprint import pprint as pp
 from scipy.stats import ttest_rel
+from matplotlib_venn import venn3, venn3_circles, venn3_unweighted
+import matplotlib.pyplot as plt
 
 tqdm.pandas()
 
@@ -158,3 +160,53 @@ paired_test_results.to_pickle(paired_test_artifact_path)
 
 ############################################################
 # Make plots
+
+if 'paired_test_results' not in globals():
+    paired_test_artifact_path = os.path.join(artifacts_dir, 'paired_test_results.pkl')
+    paired_test_results = pd.read_pickle(paired_test_artifact_path)
+
+
+paired_test_results['sig'] = paired_test_results['p_value'] < paired_test_results['corrected_alpha']
+
+# For each neuron, check if any state shows significant change
+def neuron_significance(group):
+    any_sig = group['sig'].any()
+    return pd.Series({'any_significant': any_sig})
+neuron_sig_results = \
+    paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(neuron_significance).reset_index()
+
+grand_mean_rate_df = \
+        paired_test_results.groupby(['basename', 'neuron_ind']).agg({'mean_rate_Hz': 'mean'}).reset_index()
+neuron_sig_results = neuron_sig_results.merge(grand_mean_rate_df, on=['basename', 'neuron_ind'])
+
+# make venn diagram with groups:
+# 1- all
+# 2- units with > 2Hz mean firing rate
+# 3- significant units 
+neuron_sig_results['id'] = neuron_sig_results['basename'] + '_neuron_' + neuron_sig_results['neuron_ind'].astype(str) 
+all_units = set(neuron_sig_results['id'])
+high_rate_units = set(neuron_sig_results[neuron_sig_results['mean_rate_Hz'] > 2]['id'])
+significant_units = set(neuron_sig_results[neuron_sig_results['any_significant']]['id'])
+
+fig, ax = plt.subplots(figsize=(4, 4))
+# Distinct colors for each set
+set_colors = ('#1f77b4', '#ff7f0e', '#2ca02c')
+v = venn3([all_units, high_rate_units, significant_units],
+      set_labels = ('All Units', '>2Hz Mean Rate', 'Significant Change'),
+      ax=ax, set_colors=set_colors, alpha=0.7)
+c = venn3_circles([all_units, high_rate_units, significant_units], ax=ax)
+# Draw outlines
+for circle in c:
+    circle.set_lw(1.0)
+# # Hide subset labels
+# for text in v.subset_labels:
+#     text.set_visible(False)
+# Set text color to same as circle
+for text, color in zip(v.set_labels, set_colors):
+    text.set_color(color)
+plt.title('Venn Diagram of Single Neuron Analysis')
+venn_plot_path = os.path.join(plot_dir, 'single_neuron_analysis_venn.svg')
+plt.savefig(venn_plot_path, bbox_inches='tight')
+plt.close(fig)
+
+
