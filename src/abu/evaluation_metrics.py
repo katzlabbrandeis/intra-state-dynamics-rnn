@@ -16,8 +16,10 @@ import numpy as np
 import polars as pl
 import sklearn.metrics as metrics
 
+from core.config.roots_io import resolve_roots
 from core.utils.read_parquets import read_parquet_files_into_dict
 from core.pre_processing.RNNLatentprocessing import RNNLatentProcessor
+from core.io.standard_paths import ProjectPaths
 
 
 def load_rnn_data(
@@ -102,8 +104,7 @@ def compute_bits_per_spike(
 
 
 def evaluate_rnn_performance(
-    true_rates_dir: str | Path,
-    predicted_rates_dir: str | Path,
+    repo_root: Path,
     output_dir: Optional[str | Path] = None,
     verbose: bool = False
 ) -> Dict[str, float]:
@@ -112,10 +113,8 @@ def evaluate_rnn_performance(
 
     Parameters
     ----------
-    true_rates_dir : str or Path
-        Directory containing true firing rate parquets
-    predicted_rates_dir : str or Path
-        Directory containing RNN-predicted firing rate parquets
+    repo_root : Path
+        Root directory of the repository
     output_dir : str or Path, optional
         Directory to save evaluation results
     verbose : bool, optional
@@ -126,6 +125,13 @@ def evaluate_rnn_performance(
     Dict[str, float]
         Dictionary of performance metrics
     """
+    # Resolve roots to get the RNN parquet paths
+    roots = resolve_roots(repo_root)
+    
+    # Resolve paths relative to repository root
+    true_rates_dir = _resolve_rnn_parquet_path(repo_root, roots.rnn_pred_fr_parquet_root)
+    predicted_rates_dir = _resolve_rnn_parquet_path(repo_root, roots.rnn_pred_fr_parquet_root)
+
     true_rates = load_rnn_data(true_rates_dir, data_type='firing_rate', verbose=verbose)
     predicted_rates = load_rnn_data(predicted_rates_dir, data_type='firing_rate', verbose=verbose)
 
