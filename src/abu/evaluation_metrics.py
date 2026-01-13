@@ -103,6 +103,27 @@ def compute_bits_per_spike(
     return -np.log2(mse) if mse > 0 else np.inf
 
 
+def _resolve_rnn_parquet_path(repo_root: Path, relative_path: str) -> Path:
+    """
+    Resolve a parquet path relative to the repository root.
+    
+    Parameters
+    ----------
+    repo_root : Path
+        Root directory of the repository
+    relative_path : str
+        Relative path to the parquet directory
+    
+    Returns
+    -------
+    Path
+        Resolved absolute path to the parquet directory
+    """
+    # Remove the user-specific prefix and use the last part of the path
+    path_parts = Path(relative_path).parts
+    return repo_root / "output" / "intermediate_data" / path_parts[-2] / path_parts[-1]
+
+
 def evaluate_rnn_performance(
     repo_root: Path,
     output_dir: Optional[str | Path] = None,
