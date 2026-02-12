@@ -141,6 +141,7 @@ forecast_time = 25
 train_test_split = 0.9
 time_lims = [0, spike_data.shape[-1]]
 stim_start = 500
+train_steps = 50_000
 
 ############################################################
 ############################################################
@@ -181,68 +182,46 @@ inputs_long_plus_context = np.concatenate(
     ],
     axis=-1)
 
-vz.firing_overview(inputs_long_plus_context.T)
-plt.show()
+# vz.firing_overview(inputs_long_plus_context.T)
+# plt.show()
 
-def prepare_combination_data(spike_data, params_dict):
-
-
-
-
-    if torch.cuda.is_available():
-        device = torch.device("cuda:0")
-        print("Running on the GPU")
-    else:
-        device = torch.device("cpu")
-        print("Running on the CPU")
-
-    forecast_bins = int(
-        params_dict['forecast_time'] // params_dict['bin_size'])
-    inputs_plus_context = inputs_plus_context[:-forecast_bins]
-    inputs = inputs[forecast_bins:]
-
-    labels = torch.from_numpy(inputs).type(torch.float32)
-    inputs = torch.from_numpy(inputs_plus_context).type(torch.float)
-
-    return spike_data, inputs_plus_context, labels, device, stim_time_val, pca_obj
+forecast_bins = int(forecast_time // bin_size)
+# inputs_plus_context = inputs_plus_context[:-forecast_bins]
+inputs_long_plus_context = inputs_long_plus_context[:-forecast_bins]
+# inputs = inputs[forecast_bins:]
+labels = inputs_long[forecast_bins:]
 
 
-def train_combination_model(inputs_plus_context, labels, params_dict, device):
-    input_size = inputs_plus_context.shape[-1]
-    output_size = inputs_plus_context.shape[-1] - 2
+if torch.cuda.is_available():
+    device = torch.device("cuda:0")
+    print("Running on the GPU")
+else:
+    device = torch.device("cpu")
+    print("Running on the CPU")
 
-    train_inds = np.random.choice(
-        np.arange(inputs_plus_context.shape[1]),
-        int(params_dict['train_test_split'] * inputs_plus_context.shape[1]),
-        replace=False)
-    test_inds = np.setdiff1d(
-        np.arange(inputs_plus_context.shape[1]), train_inds)
+labels_torch = torch.from_numpy(labels).type(torch.float32)
+inputs_torch = torch.from_numpy(inputs_long_plus_context).type(torch.float)
 
-    train_inputs = inputs_plus_context[:, train_inds]
-    train_labels = labels[:, train_inds]
-    test_inputs = inputs_plus_context[:, test_inds]
-    test_labels = labels[:, test_inds]
+input_size = inputs_long_plus_context.shape[-1]
+output_size = labels.shape[-1]
 
-    train_inputs = train_inputs.to(device)
-    train_labels = train_labels.to(device)
-    test_inputs = test_inputs.to(device)
-    test_labels = test_labels.to(device)
+train_inds = np.random.choice(
+    np.arange(inputs_long_plus_context.shape[1]),
+    int(train_test_split * inputs_long_plus_context.shape[1]),
+    replace=False)
+test_inds = np.setdiff1d(
+    np.arange(inputs_long_plus_context.shape[1]), train_inds)
 
-    net, loss, cross_val_loss = train_rnn_model(
-        train_inputs, train_labels, params_dict['train_steps'], params_dict['hidden_size'], output_size, device
-    )
+train_inputs = inputs_torch[:, train_inds]
+test_inputs = inputs_torch[:, test_inds]
+train_labels = labels_torch[:, train_inds]
+test_labels = labels_torch[:, test_inds]
 
-    if loss[-1] > cross_val_loss[max(cross_val_loss.keys())]:
-        warning_file_path = os.path.join(artifacts_dir, 'warning.txt')
-        warning_str = """
-        Final training loss is greater than cross validation loss.
-        This indicates something weird is going on (maybe with train-test split or PCA).
-        Try retraining the model (to get a new train-test split) or using the --no-pca flag.
-        """
-        with open(warning_file_path, 'w') as f:
-            f.write(warning_str)
-        print(warning_str)
+train_inputs = train_inputs.to(device)
+train_labels = train_labels.to(device)
+test_inputs = test_inputs.to(device)
+test_labels = test_labels.to(device)
 
-    return net, loss, cross_val_loss
-
-
+net, loss, cross_val_loss = train_rnn_model(
+    train_inputs, train_labels, train_steps, hidden_size, output_size, device
+)
