@@ -45,13 +45,27 @@ def prepare_data(spike_data, bin_size):
     return binned_spikes
 
 
-def train_rnn_model(inputs, labels, train_steps, hidden_size, output_size, device):
+def train_rnn_model(
+        inputs, 
+        labels, 
+        train_steps, 
+        hidden_size, 
+        output_size, 
+        device,
+        rnn_layers=2,
+        dropout=0.2,
+        bidirectional=False,
+        strictly_positive=False,
+        lr=0.001,
+        ):
     net = autoencoderRNN(
         input_size=inputs.shape[-1],
         hidden_size=hidden_size,
         output_size=output_size,
-        rnn_layers=2,
-        dropout=0.2,
+        rnn_layers=rnn_layers,
+        dropout=dropout,
+        bidirectional=bidirectional,
+        strictly_positive=strictly_positive,
     )
     net.to(device)
     net, loss, cross_val_loss = train_model(
@@ -59,7 +73,7 @@ def train_rnn_model(inputs, labels, train_steps, hidden_size, output_size, devic
         inputs,
         labels,
         output_size=output_size,
-        lr=0.001,
+        lr=lr,
         train_steps=train_steps,
         criterion=MSELoss(),
     )
@@ -119,12 +133,23 @@ taste_durations = taste_durations.loc[taste_order]
 ############################################################
 
 # Hardcode for now
+
+# Network hyperparameters
 hidden_size = 8
+rnn_layers = 2
+dropout = 0.2
+lr = 0.001
+bidirectional = False
+strictly_positive = True
+
+# Data parameters
 bin_size = 25
-forecast_time = 25
-train_test_split = 0.9
 time_lims = [0, spike_data.shape[-1]]
 stim_start = 500
+forecast_time = 25
+
+# Training parameters
+train_test_split = 0.9
 train_steps = 50_000
 
 ############################################################
