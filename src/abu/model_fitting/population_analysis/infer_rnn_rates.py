@@ -115,22 +115,6 @@ taste_durations = info_frame.groupby('taste')['taste_duration'].mean()
 # Sort by taste order in the data
 taste_durations = taste_durations.loc[taste_order]
 
-##############################
-
-# mse loss performs better than poisson loss
-loss_name = 'poisson'
-
-spikes_xr = [xr.DataArray(
-    x,
-    dims=['trials', 'neurons', 'time'],
-    coords={
-        'trials': np.arange(x.shape[0]),
-        'neurons': np.arange(x.shape[1]),
-        'time': np.arange(x.shape[2]),
-        'region': (['neurons'], range(x.shape[1])),
-    }
-) for x in spike_data] 
-
 ############################################################
 ############################################################
 
