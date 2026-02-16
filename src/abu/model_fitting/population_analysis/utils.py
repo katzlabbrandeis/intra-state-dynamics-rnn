@@ -45,7 +45,11 @@ def poisson_ll(lam, k):
     Ref: https://sherrytowers.com/2014/07/10/poisson-likelihood/
     """
     lam += 1e-10 # To ensure there is no log(0)
-    assert len(lam) == len(k), 'lam and k must be same length'
+    assert lam.ndim == k.ndim, 'lam and k must have same number of dimensions'
+    if lam.ndim > 1: # flatten
+        lam = lam.flatten()
+        k = k.flatten()
+    assert len(lam) == len(k), f'lam and k must be same size along each dimension, but got lam shape {lam.shape} and k shape {k.shape}'
     assert all(lam > 0), 'lam must be non-negative'
     assert all(k >= 0), 'k must be non-negative'
     return np.sum(k*np.log(lam) - lam - gammaln(k+1))
@@ -54,7 +58,7 @@ def calc_bits_per_spike(spike_train, rate):
     """
     Calculate bits per spike for a given spike train and firing rate.
     Args:
-        spike_train: numpy array of shape (trials, neurons, time_bins) with binary values indicating spikes
+        spike_train: numpy array of shape (trials, time_bins) with binary values indicating spikes
         rate: firing rate in Hz (spikes per second)
     Returns:
         bits per spike
@@ -63,8 +67,12 @@ def calc_bits_per_spike(spike_train, rate):
         - https://neuronaldynamics.epfl.ch/online/Ch10.S3.html
         - https://www.biorxiv.org/content/10.1101/2025.02.07.637062v2.full
     """
-    
-    mean_rate_ll = poisson_ll(rate, np.mean(spike_train)) 
+
+    assert spike_train.ndim == 2, 'spike_train must be 2D (trials x time_bins)'
+
+    mean_rate = np.mean(spike_train) # Average firing rate across all trials and time bins
+    mean_rate_broacast = np.broadcast_to(mean_rate, spike_train.shape) # Broadcast mean rate to shape of spike_train
+    mean_rate_ll = poisson_ll(rate, mean_rate_broacast) # Log likelihood of mean rate model
     given_rate_ll = poisson_ll(rate, spike_train)
 
     bits_per_spike = (given_rate_ll - mean_rate_ll) / (np.log(2) * np.sum(spike_train)) 
