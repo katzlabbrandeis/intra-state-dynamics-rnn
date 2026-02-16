@@ -6,13 +6,19 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 import seaborn as sns
-import os
 import pingouin as pg
 import cloudpickle
 from cloudpickle import load, dump
 
-##############################
+import sys
+import os
 base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
+src_dir = os.path.join(base_dir, 'src', 'abu', 'model_fitting', 'population_analysis')
+sys.path.append(src_dir)
+
+from utils import SpikeRasterIO
+
+##############################
 output_dir = os.path.join(base_dir, 'output')
 artifacts_dir = os.path.join(output_dir, 'artifacts')
 
@@ -123,32 +129,6 @@ best_fit_data_df_fp = os.path.join(
     )
 best_fit_data_df = pd.read_pickle(best_fit_data_df_fp)
 
-class SpikeRasterIO:
-    @staticmethod
-    def spike_train_to_spike_times(spike_train):
-        """
-        Convert spike trains (binary arrays) to spike times (lists of spike timestamps).
-        Args:
-            spike_trains: numpy array of shape (trials, neurons, time_bins)
-        Returns:
-            array of shape (dims x spike_times), where dims is the number of dimensions in the original spike_trains (e.g. trials x neurons) 
-        """
-        original_array_shape = spike_train.shape
-        return np.array(np.where(spike_train)), original_array_shape
-
-    @staticmethod
-    def spike_times_to_spike_train(spike_times, original_array_shape):
-        """
-        Convert spike times (lists of spike timestamps) back to spike trains (binary arrays).
-        Args:
-            spike_times: array of shape (dims x spike_times), where dims is the number of dimensions in the original spike_trains (e.g. trials x neurons)
-            original_array_shape: tuple indicating the shape of the original spike_trains array (trials, neurons, time_bins)
-        Returns:
-            numpy array of shape (trials, neurons, time_bins) with binary values indicating spikes
-        """
-        spike_train = np.zeros(original_array_shape, dtype=int)
-        spike_train[tuple(spike_times)] = 1
-        return spike_train
 
 
 # Generate splits and save to disk
