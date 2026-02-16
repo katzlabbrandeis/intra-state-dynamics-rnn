@@ -115,3 +115,80 @@ dump_note_fp = os.path.join(artifacts_subdir, 'dump_note.txt')
 with open(dump_note_fp, 'w') as f:
     f.write(f'This directory contains dataframes dumped using cloudpickle version {cloudpickle.__version__}')
 
+##############################
+
+# Load best fit data dataframe and save spike rasters as spike-times
+best_fit_data_df_fp = os.path.join(
+    artifacts_subdir, 'best_fit_data_df.pkl'
+    )
+best_fit_data_df = pd.read_pickle(best_fit_data_df_fp)
+
+class SpikeRasterIO:
+    @staticmethod
+    def spike_train_to_spike_times(spike_train):
+        """
+        Convert spike trains (binary arrays) to spike times (lists of spike timestamps).
+        Args:
+            spike_trains: numpy array of shape (trials, neurons, time_bins)
+        Returns:
+            array of shape (dims x spike_times), where dims is the number of dimensions in the original spike_trains (e.g. trials x neurons) 
+        """
+        original_array_shape = spike_train.shape
+        return np.array(np.where(spike_train)), original_array_shape
+
+    @staticmethod
+    def spike_times_to_spike_train(spike_times, original_array_shape):
+        """
+        Convert spike times (lists of spike timestamps) back to spike trains (binary arrays).
+        Args:
+            spike_times: array of shape (dims x spike_times), where dims is the number of dimensions in the original spike_trains (e.g. trials x neurons)
+            original_array_shape: tuple indicating the shape of the original spike_trains array (trials, neurons, time_bins)
+        Returns:
+            numpy array of shape (trials, neurons, time_bins) with binary values indicating spikes
+        """
+        spike_train = np.zeros(original_array_shape, dtype=int)
+        spike_train[tuple(spike_times)] = 1
+        return spike_train
+
+
+# Generate splits and save to disk
+n_splits = 10
+train_test_frac = 0.75 # Splitting along neuron dimension, so this is the fraction of neurons to use for training
+split_data_list = []
+for idx, row in tqdm(best_fit_data_df.iterrows()):
+    spike_trains = row['spike_trains']
+    original_array_shape = spike_trains.shape
+
+    n_neurons = spike_trains.shape[1]
+    neuron_indices = np.arange(n_neurons)
+    for split_ind in range(n_splits):
+        np.random.shuffle(neuron_indices)
+        train_neurons = neuron_indices[:int(train_test_frac * n_neurons)]
+        test_neurons = neuron_indices[int(train_test_frac * n_neurons):]
+
+        train_spike_trains = spike_trains[:, train_neurons, :]
+        test_spike_trains = spike_trains[:, test_neurons, :]
+
+        train_spike_times, train_shape = SpikeRasterIO.spike_train_to_spike_times(train_spike_trains)
+        test_spike_times, test_shape = SpikeRasterIO.spike_train_to_spike_times(test_spike_trains)
+
+        split_data_list.append({
+            'basename': row['basename'],
+            'taste_name': row['taste_name'],
+            'dat_type': row['dat_type'],
+            'split_ind': split_ind,
+            'train_neurons': train_neurons,
+            'test_neurons': test_neurons,
+            'train_spike_times': train_spike_times,
+            'train_shape': train_shape,
+            'test_spike_times': test_spike_times,
+            'test_shape': test_shape
+        })
+
+# Combine into a dataframe and write to disk
+split_data_df = pd.DataFrame(split_data_list)
+split_data_df_fp = os.path.join(
+    artifacts_subdir, 'split_data_df.pkl'
+    )
+with open(split_data_df_fp, 'wb') as f:
+    dump(split_data_df, f)
