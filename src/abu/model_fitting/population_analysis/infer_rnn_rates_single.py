@@ -27,8 +27,10 @@ from src.model import autoencoderRNN  # noqa
 def prepare_data(spike_data, bin_size):
     # Cut taste_spikes to time limits
     # Bin spikes
+    print(f"Binning spike data with bin_size={bin_size}ms...")
     binned_spikes = np.reshape(
         spike_data, (*spike_data.shape[:-1], -1, bin_size)).sum(-1)
+    print(f"Binned spike data shape: {binned_spikes.shape}")
     return binned_spikes
 
 
@@ -170,6 +172,10 @@ def train_rnn_all_tastes(
     train_inputs = inputs_torch.to(device)
     train_labels = labels_torch.to(device)
 
+    print(f"Training RNN model for {train_steps} steps...")
+    print(f"Model configuration: hidden_size={hidden_size}, rnn_layers={rnn_layers}, "
+          f"bidirectional={bidirectional}, dropout={dropout}")
+    
     net, loss, cross_val_loss = train_rnn_model(
         train_inputs, 
         train_labels, 
@@ -185,6 +191,7 @@ def train_rnn_all_tastes(
     )
 
     # Get predictions
+    print("Generating predictions from trained model...")
     outputs, latent = net(inputs_torch.to(device))
     # Shape: time_bins x (tastes*trials) x output_size
     outputs = outputs.detach().cpu().numpy()
@@ -211,19 +218,32 @@ if __name__ == "__main__":
     input_path = args.input_path
     output_dir = args.output_dir
 
+    print(f"Loading input data from: {input_path}")
     with open(input_path, 'rb') as f:
         inputs_dict = load(f)
+    print("Input data loaded successfully")
 
     spike_data = inputs_dict['spike_data']
     taste_durations = inputs_dict['taste_durations']
     params_dict = inputs_dict['params_dict']
 
+    print(f"Spike data shape: {spike_data.shape}")
+    print(f"Number of tastes: {len(taste_durations)}")
+    print("Training parameters:")
+    pprint(params_dict)
+    print("\nStarting RNN training...")
+    
     net, loss, cross_val_loss, outputs, latent = train_rnn_all_tastes(
         spike_data,
         taste_durations,
         params_dict,
     )
+    print("Training completed successfully")
+    print(f"Final training loss: {loss[-1]:.6f}")
+    print(f"Final cross-validation loss: {cross_val_loss[-1]:.6f}")
+    
     # Save outputs to new pkl
+    print("\nPreparing outputs for saving...")
     output_dict = dict(
         outputs=outputs,
         latent=latent,
@@ -233,6 +253,12 @@ if __name__ == "__main__":
     input_basename = os.path.basename(input_path)
     output_basename = input_basename.replace('.pkl', '_predicted.pkl')
     output_path = os.path.join(output_dir, output_basename)
+    
+    print(f"Saving results to: {output_path}")
     with open(output_path, 'wb') as f:
         dump(output_dict, f)
+    print("Results saved successfully")
+    print(f"\nOutput shapes:")
+    print(f"  - outputs: {outputs.shape}")
+    print(f"  - latent: {latent.shape}")
 
