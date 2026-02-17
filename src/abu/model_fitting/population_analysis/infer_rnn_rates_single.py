@@ -110,6 +110,7 @@ def train_rnn_all_tastes(
     bin_size = params_dict['bin_size']
     stim_start = params_dict['stim_start']
     forecast_time = params_dict['forecast_time']
+    train_steps = params_dict['train_steps']
 
     ############### 
     n_tastes = len(spike_data)
