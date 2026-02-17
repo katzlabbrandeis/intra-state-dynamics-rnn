@@ -332,6 +332,19 @@ torch.save(net.state_dict(), model_save_path)
 # Load model (for testing)
 # net.load_state_dict(torch.load(model_save_path)) 
 
+fig, ax = plt.subplots()
+ax.plot(loss, label='Training Loss')
+# plt.plot(cross_val_loss, label='Cross-Validation Loss')
+ax.set_xlabel('Training Steps')
+ax.set_ylabel('Loss')
+ax.set_title('RNN Training Loss')
+plt.legend()
+# Make an inset plot zooming in on the last 1000 training steps
+inset_ax = fig.add_axes([0.5, 0.5, 0.4, 0.4])
+inset_ax.plot(loss[-5000:], label='Training Loss')
+fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_training_loss.png'))
+plt.close(fig)
+
 # Plot outputs and latents
 fig, ax = vz.firing_overview(outputs.T)
 fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_outputs.png'))
