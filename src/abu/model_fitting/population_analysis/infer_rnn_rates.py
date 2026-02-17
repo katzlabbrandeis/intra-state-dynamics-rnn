@@ -162,6 +162,16 @@ params_dict = dict(
     train_steps=train_steps,
     )
 
+# Bundle all inputs into a single pkl so training can be parallelized
+inputs_dict = dict(
+    spike_data=spike_data,
+    taste_durations=taste_durations,
+    params_dict=params_dict,
+    )
+inputs_pkl_path = os.path.join(artifacts_dir, f'{basename}_rnn_inputs.pkl')
+with open(inputs_pkl_path, 'wb') as f:
+    dump(inputs_dict, f)
+
 ############################################################
 ############################################################
 
