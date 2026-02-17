@@ -151,89 +151,178 @@ forecast_time = 25
 train_test_split = 0.9
 train_steps = 50_000
 
+params_dict = dict(
+    hidden_size=hidden_size,
+    rnn_layers=rnn_layers,
+    dropout=dropout,
+    lr=lr,
+    bidirectional=bidirectional,
+    strictly_positive=strictly_positive,
+    bin_size=bin_size,
+    time_lims=time_lims,
+    stim_start=stim_start,
+    forecast_time=forecast_time,
+    train_test_split=train_test_split,
+    train_steps=train_steps,
+    )
+
 ############################################################
 ############################################################
 
-binned_spikes = prepare_data(spike_data, bin_size)
-trial_num = np.arange(spike_data.shape[1])
+def train_rnn_all_tastes(
+        spike_data,
+        taste_durations,
+        params_dict,
+        ):
 
-inputs = binned_spikes.copy()
-# New shape: time_bins x tastes x trials x neurons
-inputs = np.moveaxis(inputs, -1, 0)
+    """
+    Train an RNN model to predict firing rates from spike data for each taste.
 
-stim_start_ind = stim_start // bin_size
-stim_dur_inds = taste_durations // bin_size
-stim_end_ind = stim_start_ind + stim_dur_inds.astype(int)
+    Parameters:
+        - spike_data: 4D numpy array of shape (tastes x trials x neurons x time)
+        - taste_durations: 1D numpy array of average taste durations for each taste
+        - params_dict: dictionary of parameters for training and model configuration
+            - hidden_size: int, number of hidden units in the RNN
+            - rnn_layers: int, number of RNN layers
+            - dropout: float, dropout rate for the RNN
+            - lr: float, learning rate for training
+            - bidirectional: bool, whether to use a bidirectional RNN
+            - strictly_positive: bool, whether to enforce strictly positive outputs
+            - bin_size: int, size of time bins for spike data
+            - time_lims: list of two ints, start and end times for analysis
+            - stim_start: int, time of stimulus onset in ms
+            - forecast_time: int, time in ms to forecast ahead
+            - train_test_split: float, proportion of data to use for training
+            - train_steps: int, number of training steps for the RNN
+    Returns:
+        - net: trained RNN model
+        - loss: list of training losses over time
+        - cross_val_loss: list of cross-validation losses over time
+    """
 
-stim_time = np.zeros(inputs.shape[:3])
-for taste_ind, this_end_ind in enumerate(stim_end_ind):
-    stim_time[stim_start_ind:this_end_ind, taste_ind] = 1
+    assert spike_data.ndim == 4, "Spike data must be 4D (tastes x trials x neurons x time)"
+    assert spike_data.shape[0] == len(taste_durations), "Number of tastes in spike data and taste durations must match"
 
-trial_num_scaled = trial_num / trial_num.max()
-trial_num_broad = np.broadcast_to(trial_num_scaled, inputs.shape[:-1])
+    # Unload parameters
+    hidden_size = params_dict['hidden_size']
+    rnn_layers = params_dict['rnn_layers']
+    dropout = params_dict['dropout']
+    lr = params_dict['lr']
+    bidirectional = params_dict['bidirectional']
+    strictly_positive = params_dict['strictly_positive']
+    bin_size = params_dict['bin_size']
+    time_lims = params_dict['time_lims']
+    stim_start = params_dict['stim_start']
+    forecast_time = params_dict['forecast_time']
+    train_test_split = params_dict['train_test_split']
 
-taste_num_scaled = np.arange(len(taste_order)) / len(taste_order)
-taste_num_broad = np.broadcast_to(taste_num_scaled[None,:,None], inputs.shape[:-1])
+    ############### 
+    n_tastes = len(spike_data)
+    binned_spikes = prepare_data(spike_data, bin_size)
+    trial_num = np.arange(spike_data.shape[1])
 
-# Stack trials across tastes so that 2nd dimension is trials*tastes
-inputs_long = inputs.reshape(inputs.shape[0], -1, inputs.shape[-1])
-stim_time_long = stim_time.reshape(stim_time.shape[0], -1)
-trial_num_long = trial_num_broad.reshape(trial_num_broad.shape[0], -1)
-taste_num_long = taste_num_broad.reshape(taste_num_broad.shape[0], -1)
+    inputs = binned_spikes.copy()
+    # New shape: time_bins x tastes x trials x neurons
+    inputs = np.moveaxis(inputs, -1, 0)
 
-inputs_long_plus_context = np.concatenate(
-    [
-        inputs_long,
-        stim_time_long[:, :, None],
-        trial_num_long[:, :, None],
-        taste_num_long[:, :, None],
-    ],
-    axis=-1)
+    stim_start_ind = stim_start // bin_size
+    stim_dur_inds = taste_durations // bin_size
+    stim_end_ind = stim_start_ind + stim_dur_inds.astype(int)
 
-fig, ax = vz.firing_overview(inputs_long_plus_context.T)
-fig.savefig(os.path.join(plot_dir, f'{basename}_firing_overview.png'))
-plt.close(fig)
-# plt.show()
+    stim_time = np.zeros(inputs.shape[:3])
+    for taste_ind, this_end_ind in enumerate(stim_end_ind):
+        stim_time[stim_start_ind:this_end_ind, taste_ind] = 1
 
-forecast_bins = int(forecast_time // bin_size)
-# inputs_plus_context = inputs_plus_context[:-forecast_bins]
-inputs_long_plus_context = inputs_long_plus_context[:-forecast_bins]
-# inputs = inputs[forecast_bins:]
-labels = inputs_long[forecast_bins:]
+    trial_num_scaled = trial_num / trial_num.max()
+    trial_num_broad = np.broadcast_to(trial_num_scaled, inputs.shape[:-1])
+
+    taste_num_scaled = np.arange(n_tastes) / n_tastes
+    taste_num_broad = np.broadcast_to(taste_num_scaled[None,:,None], inputs.shape[:-1])
+
+    # Stack trials across tastes so that 2nd dimension is trials*tastes
+    inputs_long = inputs.reshape(inputs.shape[0], -1, inputs.shape[-1])
+    stim_time_long = stim_time.reshape(stim_time.shape[0], -1)
+    trial_num_long = trial_num_broad.reshape(trial_num_broad.shape[0], -1)
+    taste_num_long = taste_num_broad.reshape(taste_num_broad.shape[0], -1)
+
+    inputs_long_plus_context = np.concatenate(
+        [
+            inputs_long,
+            stim_time_long[:, :, None],
+            trial_num_long[:, :, None],
+            taste_num_long[:, :, None],
+        ],
+        axis=-1)
+
+    # fig, ax = vz.firing_overview(inputs_long_plus_context.T)
+    # fig.savefig(os.path.join(plot_dir, f'{basename}_firing_overview.png'))
+    # plt.close(fig)
+    # plt.show()
+
+    forecast_bins = int(forecast_time // bin_size)
+    # inputs_plus_context = inputs_plus_context[:-forecast_bins]
+    inputs_long_plus_context = inputs_long_plus_context[:-forecast_bins]
+    # inputs = inputs[forecast_bins:]
+    labels = inputs_long[forecast_bins:]
 
 
-if torch.cuda.is_available():
-    device = torch.device("cuda:0")
-    print("Running on the GPU")
-else:
-    device = torch.device("cpu")
-    print("Running on the CPU")
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+        print("Running on the GPU")
+    else:
+        device = torch.device("cpu")
+        print("Running on the CPU")
 
-labels_torch = torch.from_numpy(labels).type(torch.float32)
-inputs_torch = torch.from_numpy(inputs_long_plus_context).type(torch.float)
+    labels_torch = torch.from_numpy(labels).type(torch.float32)
+    inputs_torch = torch.from_numpy(inputs_long_plus_context).type(torch.float)
 
-input_size = inputs_long_plus_context.shape[-1]
-output_size = labels.shape[-1]
+    input_size = inputs_long_plus_context.shape[-1]
+    output_size = labels.shape[-1]
 
-train_inds = np.random.choice(
-    np.arange(inputs_long_plus_context.shape[1]),
-    int(train_test_split * inputs_long_plus_context.shape[1]),
-    replace=False)
-test_inds = np.setdiff1d(
-    np.arange(inputs_long_plus_context.shape[1]), train_inds)
+    train_inds = np.random.choice(
+        np.arange(inputs_long_plus_context.shape[1]),
+        int(train_test_split * inputs_long_plus_context.shape[1]),
+        replace=False)
+    test_inds = np.setdiff1d(
+        np.arange(inputs_long_plus_context.shape[1]), train_inds)
 
-train_inputs = inputs_torch[:, train_inds]
-test_inputs = inputs_torch[:, test_inds]
-train_labels = labels_torch[:, train_inds]
-test_labels = labels_torch[:, test_inds]
+    train_inputs = inputs_torch[:, train_inds]
+    test_inputs = inputs_torch[:, test_inds]
+    train_labels = labels_torch[:, train_inds]
+    test_labels = labels_torch[:, test_inds]
 
-train_inputs = train_inputs.to(device)
-train_labels = train_labels.to(device)
-test_inputs = test_inputs.to(device)
-test_labels = test_labels.to(device)
+    train_inputs = train_inputs.to(device)
+    train_labels = train_labels.to(device)
+    test_inputs = test_inputs.to(device)
+    test_labels = test_labels.to(device)
 
-net, loss, cross_val_loss = train_rnn_model(
-    train_inputs, train_labels, train_steps, hidden_size, output_size, device
+    net, loss, cross_val_loss = train_rnn_model(
+        train_inputs, 
+        train_labels, 
+        train_steps, 
+        hidden_size, 
+        output_size, 
+        device,
+        rnn_layers=rnn_layers,
+        dropout=dropout,
+        bidirectional=bidirectional,
+        strictly_positive=strictly_positive,
+        lr=lr,
+    )
+
+    # Get predictions
+    outputs, latent = net(inputs_torch.to(device))
+    # Shape: time_bins x (tastes*trials) x output_size
+    outputs = outputs.detach().cpu().numpy()
+    # Shape: time_bins x (tastes*trials) x latent_size
+    latent = latent.detach().cpu().numpy()
+
+    return net, loss, cross_val_loss, outputs, latent
+
+net, loss, cross_val_loss, outputs, latent = train_rnn_all_tastes(
+    spike_data,
+    taste_durations,
+    params_dict,
 )
 
 # Save the model
@@ -242,13 +331,6 @@ torch.save(net.state_dict(), model_save_path)
 
 # Load model (for testing)
 # net.load_state_dict(torch.load(model_save_path)) 
-
-# Get predictions
-outputs, latent = net(inputs_torch.to(device))
-# Shape: time_bins x (tastes*trials) x output_size
-outputs = outputs.detach().cpu().numpy()
-# Shape: time_bins x (tastes*trials) x latent_size
-latent = latent.detach().cpu().numpy()
 
 # Plot outputs and latents
 fig, ax = vz.firing_overview(outputs.T)
