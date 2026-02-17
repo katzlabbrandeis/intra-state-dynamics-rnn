@@ -143,12 +143,10 @@ strictly_positive = True
 
 # Data parameters
 bin_size = 25
-time_lims = [0, spike_data.shape[-1]]
 stim_start = 500
 forecast_time = 25
 
 # Training parameters
-train_test_split = 0.9
 train_steps = 50_000
 
 params_dict = dict(
@@ -159,10 +157,8 @@ params_dict = dict(
     bidirectional=bidirectional,
     strictly_positive=strictly_positive,
     bin_size=bin_size,
-    time_lims=time_lims,
     stim_start=stim_start,
     forecast_time=forecast_time,
-    train_test_split=train_test_split,
     train_steps=train_steps,
     )
 
@@ -189,10 +185,8 @@ def train_rnn_all_tastes(
             - bidirectional: bool, whether to use a bidirectional RNN
             - strictly_positive: bool, whether to enforce strictly positive outputs
             - bin_size: int, size of time bins for spike data
-            - time_lims: list of two ints, start and end times for analysis
             - stim_start: int, time of stimulus onset in ms
             - forecast_time: int, time in ms to forecast ahead
-            - train_test_split: float, proportion of data to use for training
             - train_steps: int, number of training steps for the RNN
     Returns:
         - net: trained RNN model
@@ -211,10 +205,8 @@ def train_rnn_all_tastes(
     bidirectional = params_dict['bidirectional']
     strictly_positive = params_dict['strictly_positive']
     bin_size = params_dict['bin_size']
-    time_lims = params_dict['time_lims']
     stim_start = params_dict['stim_start']
     forecast_time = params_dict['forecast_time']
-    train_test_split = params_dict['train_test_split']
 
     ############### 
     n_tastes = len(spike_data)
@@ -279,22 +271,8 @@ def train_rnn_all_tastes(
     input_size = inputs_long_plus_context.shape[-1]
     output_size = labels.shape[-1]
 
-    train_inds = np.random.choice(
-        np.arange(inputs_long_plus_context.shape[1]),
-        int(train_test_split * inputs_long_plus_context.shape[1]),
-        replace=False)
-    test_inds = np.setdiff1d(
-        np.arange(inputs_long_plus_context.shape[1]), train_inds)
-
-    train_inputs = inputs_torch[:, train_inds]
-    test_inputs = inputs_torch[:, test_inds]
-    train_labels = labels_torch[:, train_inds]
-    test_labels = labels_torch[:, test_inds]
-
-    train_inputs = train_inputs.to(device)
-    train_labels = train_labels.to(device)
-    test_inputs = test_inputs.to(device)
-    test_labels = test_labels.to(device)
+    train_inputs = inputs_torch.to(device)
+    train_labels = labels_torch.to(device)
 
     net, loss, cross_val_loss = train_rnn_model(
         train_inputs, 
