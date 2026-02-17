@@ -22,7 +22,6 @@ from pprint import pprint  # noqa
 import json  # noqa
 from itertools import product  # noqa
 import pandas as pd  # noqa
-import xarray as xr  # noqa
 from blech_clust.utils.ephys_data import ephys_data, visualize as vz  # noqa
 from cloudpickle import load, dump  # noqa
 
@@ -33,9 +32,8 @@ if os.path.exists(blechRNN_path):
 else:
     raise FileNotFoundError('blechRNN not found on Desktop')
 
-from src.train import train_model, MSELoss  # noqa
+from src.train import train_model, MSELoss, PoissonLoss
 from src.model import autoencoderRNN  # noqa
-
 
 def prepare_data(spike_data, bin_size):
     # Cut taste_spikes to time limits
@@ -75,7 +73,7 @@ def train_rnn_model(
         output_size=output_size,
         lr=lr,
         train_steps=train_steps,
-        criterion=MSELoss(),
+        criterion=PoissonLoss(),
     )
     return net, loss, cross_val_loss
 
@@ -101,9 +99,9 @@ best_fit_data_df['data_dir'] = best_fit_data_df['basename'].map(basename_map)
 
 output_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output'
 artifacts_sup_dir = os.path.join(output_path, 'artifacts/population_analysis')
-artifacts_dir = os.path.join(artifacts_sup_dir, 'rnn_fits')
-plots_sup_dir = os.path.join(output_path, 'plots')
-plot_dir = os.path.join(plots_sup_dir, 'population_analysis')
+artifacts_dir = os.path.join(artifacts_sup_dir, 'rnn_fits', 'test_fit')
+plots_sup_dir = os.path.join(output_path, 'plots', 'population_analysis')
+plot_dir = os.path.join(plots_sup_dir, 'rnn_rates')
 
 os.makedirs(artifacts_dir, exist_ok=True)
 os.makedirs(plot_dir, exist_ok=True)
@@ -191,7 +189,9 @@ inputs_long_plus_context = np.concatenate(
     ],
     axis=-1)
 
-# vz.firing_overview(inputs_long_plus_context.T)
+fig, ax = vz.firing_overview(inputs_long_plus_context.T)
+fig.savefig(os.path.join(plot_dir, f'{basename}_firing_overview.png'))
+plt.close(fig)
 # plt.show()
 
 forecast_bins = int(forecast_time // bin_size)
@@ -234,3 +234,26 @@ test_labels = test_labels.to(device)
 net, loss, cross_val_loss = train_rnn_model(
     train_inputs, train_labels, train_steps, hidden_size, output_size, device
 )
+
+# Save the model
+model_save_path = os.path.join(artifacts_dir, f'{basename}_rnn_model.pt')
+torch.save(net.state_dict(), model_save_path)
+
+# Load model (for testing)
+# net.load_state_dict(torch.load(model_save_path)) 
+
+# Get predictions
+outputs, latent = net(inputs_torch.to(device))
+# Shape: time_bins x (tastes*trials) x output_size
+outputs = outputs.detach().cpu().numpy()
+# Shape: time_bins x (tastes*trials) x latent_size
+latent = latent.detach().cpu().numpy()
+
+# Plot outputs and latents
+fig, ax = vz.firing_overview(outputs.T)
+fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_outputs.png'))
+plt.close(fig)
+
+fig, ax = vz.firing_overview(latent.T)
+fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_latent.png'))
+plt.close(fig)
