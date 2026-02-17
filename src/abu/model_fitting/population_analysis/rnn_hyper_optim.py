@@ -16,6 +16,9 @@ from blech_clust.utils.ephys_data import ephys_data, visualize as vz  # noqa
 from cloudpickle import load, dump  # noqa
 from sklearn.decomposition import PCA  # noqa
 
+import optuna  # noqa
+from optuna.visualization import plot_optimization_history, plot_param_importances, plot_contour  # noqa 
+
 # Check that blechRNN is on the Desktop, if so, add to path
 blechRNN_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'blechRNN')
 if os.path.exists(blechRNN_path):
@@ -126,7 +129,6 @@ with open(inputs_pkl_path, 'wb') as f:
 
 ############################################################
 # Create optuna study and optimize hyperparameters
-import optuna  # noqa
 
 def objective(trial):
     # Sample hyperparameters
@@ -171,6 +173,23 @@ study = optuna.create_study(direction='minimize',
                             # study_name="rnn_hyperparameter_optimization",
                             )
 study.optimize(objective, n_trials=20)
+
+# Save study as pkl
+study_pkl_path = os.path.join(artifacts_dir, f'{basename}_optuna_study.pkl')
+# with open(study_pkl_path, 'wb') as f:
+#     dump(study, f)
+with open(study_pkl_path, 'rb') as f:
+    study = load(f)
+
+
+fig = plot_optimization_history(study)
+fig = plot_param_importances(study)
+fig.show()
+
+fig = plot_contour(study) 
+fig.show()
+
+study_df = study.trials_dataframe()
 
 ############################################################
 
