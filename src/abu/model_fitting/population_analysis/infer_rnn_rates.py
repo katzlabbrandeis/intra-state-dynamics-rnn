@@ -24,6 +24,7 @@ from itertools import product  # noqa
 import pandas as pd  # noqa
 from blech_clust.utils.ephys_data import ephys_data, visualize as vz  # noqa
 from cloudpickle import load, dump  # noqa
+from sklearn.decomposition import PCA  # noqa
 
 # Check that blechRNN is on the Desktop, if so, add to path
 blechRNN_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'blechRNN')
@@ -256,4 +257,26 @@ plt.close(fig)
 
 fig, ax = vz.firing_overview(latent.T)
 fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_latent.png'))
+plt.close(fig)
+
+# Plot latents for n random trials
+# Also plot PCA of latents
+latent_long = latent.reshape(-1, latent.shape[-1])
+pca_obj = PCA(n_components=0.9)
+latent_pca = pca_obj.fit_transform(latent_long)
+latent_pca_trials = latent_pca.reshape(latent.shape[0], -1, latent_pca.shape[-1])
+
+n_random = 10
+random_inds = np.random.choice(latent.shape[1], n_random, replace=False)
+fig, ax = plt.subplots(n_random, 2, figsize=(10, 2*n_random), sharex=True, sharey=True)
+for i, ind in enumerate(random_inds):
+    ax[i,0].plot(latent[:, ind])
+    ax[i,0].set_title(f'Trial {ind}')
+    ax[i,0].axvline(stim_start_ind, color='red', linestyle='--')
+    ax[i,1].plot(latent_pca_trials[:, ind])
+    ax[i,1].set_title(f'Trial {ind} PCA')
+    ax[i,1].axvline(stim_start_ind, color='red', linestyle='--')
+fig.suptitle('RNN Latent Factors for Random Trials + PCA of Latents')
+fig.tight_layout()
+fig.savefig(os.path.join(plot_dir, f'{basename}_rnn_latent_random_trials.png'))
 plt.close(fig)
