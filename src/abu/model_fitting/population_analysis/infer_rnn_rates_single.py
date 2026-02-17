@@ -263,3 +263,8 @@ if __name__ == "__main__":
     print(f"  - outputs: {outputs.shape}")
     print(f"  - latent: {latent.shape}")
 
+    # Also save the trained model
+    model_output_path = os.path.join(output_dir, output_basename.replace('.pkl', '_model.pt'))
+    print(f"Saving trained model to: {model_output_path}")
+    torch.save(net.state_dict(), model_output_path)
+    print("Trained model saved successfully")
