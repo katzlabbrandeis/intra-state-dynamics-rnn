@@ -31,7 +31,8 @@ from src.model import autoencoderRNN  # noqa
 
 src_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/src/abu/model_fitting/population_analysis'
 sys.path.append(src_dir)
-from infer_rnn_rates_single import train_rnn_all_tastes 
+import infer_rnn_rates_single as infer_rates 
+# from utils import SpikeRasterIO
 
 ############################################################
 ############################################################
@@ -50,12 +51,21 @@ basename_map = dict(zip(basenames, data_dir_list))
 #Columns: basename, taste_name, spike_trains
 best_fit_data_df['data_dir'] = best_fit_data_df['basename'].map(basename_map)
 
-############################################################
-############################################################
-
 output_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output'
 artifacts_sup_dir = os.path.join(output_path, 'artifacts/population_analysis')
 artifacts_dir = os.path.join(artifacts_sup_dir, 'rnn_fits', 'test_fit')
+
+# split_data_df_fp = os.path.join(
+#     artifacts_sup_dir, 'trial_split_data_df.pkl'
+#     )
+# # with open(split_data_df_fp, 'wb') as f:
+# #     dump(split_data_df, f)
+# with open(split_data_df_fp, 'rb') as f:
+#     split_data_df = load(f)
+#
+############################################################
+############################################################
+
 plots_sup_dir = os.path.join(output_path, 'plots', 'population_analysis')
 plot_dir = os.path.join(plots_sup_dir, 'rnn_rates')
 
@@ -64,6 +74,14 @@ os.makedirs(plot_dir, exist_ok=True)
 
 ###############
 # Load data
+# row_ind = 0
+# this_row = split_data_df.loc[row_ind]
+# basename = this_row['basename']
+# train_spike_array = SpikeRasterIO.spike_times_to_spike_train(
+#         this_row['train_spike_times'], this_row['train_shape'])
+# test_spike_array = SpikeRasterIO.spike_times_to_spike_train(
+#         this_row['test_spike_times'], this_row['test_shape'])
+
 data_dir = best_fit_data_df.loc[0, 'data_dir']
 basename = os.path.basename(data_dir)
 print(f'Processing data from {data_dir}')
@@ -117,6 +135,11 @@ params_dict = dict(
     train_steps=train_steps,
     )
 
+# Specify test_trials for cross-validation during training
+test_fraction = 0.25
+trial_inds = np.arange(spike_data.shape[0]*spike_data.shape[1]) # Trials are flattened internally during training, so trial_inds is just a range of the total number of trial-neuron combinations 
+test_inds = np.random.choice(trial_inds, size=int(test_fraction * len(trial_inds)), replace=False)
+
 # Bundle all inputs into a single pkl so training can be parallelized
 inputs_dict = dict(
     spike_data=spike_data,
@@ -126,6 +149,18 @@ inputs_dict = dict(
 inputs_pkl_path = os.path.join(artifacts_dir, f'{basename}_rnn_inputs.pkl')
 with open(inputs_pkl_path, 'wb') as f:
     dump(inputs_dict, f)
+
+############################################################
+# Run test training to make sure everything is working before running optuna optimization
+from importlib import reload
+reload(infer_rates)
+
+net, loss, cross_val_loss, best_cross_val_loss, outputs, latent, split_dict = infer_rates.train_rnn_all_tastes(
+    spike_data,
+    taste_durations,
+    params_dict,
+    test_trials=test_inds,
+)
 
 ############################################################
 # Create optuna study and optimize hyperparameters
@@ -159,13 +194,15 @@ def objective(trial):
     print(f'  strictly_positive: {strictly_positive}')
 
     # Train the model and get the final loss
-    net, loss, cross_val_loss, outputs, latent = train_rnn_all_tastes(
+    net, loss, cross_val_loss, best_cross_val_loss, outputs, latent = train_rnn_all_tastes(
         spike_data,
         taste_durations,
         params_dict,
+        test_trials=test_inds,
     )
     
-    final_loss = loss[-1]  # Use final training loss as objective value
+    # final_loss = loss[-1]  # Use final training loss as objective value
+    final_loss = best_cross_val_loss  # Use best cross-validation loss as objective value
     return final_loss
 
 study = optuna.create_study(direction='minimize',
@@ -183,21 +220,18 @@ with open(study_pkl_path, 'rb') as f:
 
 
 fig = plot_optimization_history(study)
+fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_optimization_history.html'))
 fig = plot_param_importances(study)
-fig.show()
+fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_param_importances.html'))
+# fig.show()
 
 fig = plot_contour(study) 
-fig.show()
+fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_contour.html'))
+# fig.show()
 
 study_df = study.trials_dataframe()
 
 ############################################################
-
-net, loss, cross_val_loss, outputs, latent = train_rnn_all_tastes(
-    spike_data,
-    taste_durations,
-    params_dict,
-)
 
 # Save the model
 model_save_path = os.path.join(artifacts_dir, f'{basename}_rnn_model.pt')
