@@ -10,7 +10,7 @@ __pycache__/
 .venv/
 .env/
 .envrc
-
+#.Identifier
 # OS/editor
 .DS_Store
 .vscode/
