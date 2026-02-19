@@ -4,10 +4,9 @@ config loader for this whole runtime thing
 """
 
 
-
+import json
 import os
 import sys
-import json
 
 
 def load_config(config_path):

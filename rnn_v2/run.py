@@ -1,5 +1,5 @@
 """
-Part of a concerted effort to clean this script up in general to make it that much 
+Part of a concerted effort to clean this script up in general to make it that much
 easier to do model comparisons, etc
 
 run_rnn.py — Main orchestration script.
@@ -12,36 +12,44 @@ Loops over H5 datasets and tastes, calling modular functions for:
     - Visualization
     - Saving outputs
 
-NOTE: On the params json: 
+NOTE: On the params json:
 Config parameter "validation_mode":
     - "split" (default): standard train/test split
     - "loo": leave-one-out CV for AIC/BIC, then retrain on all trials
 
 """
+from ephys_data import ephys_data
 import os
+
 import numpy as np
 import torch
-
 from config_loader import load_config
-from preprocessing import preprocess_taste, train_test_split_trials
-from run_training import train_or_load, run_prediction, loo_then_train
 from postprocessing import reconstruct_firing
+from preprocessing import preprocess_taste, train_test_split_trials
+from run_training import loo_then_train, run_prediction, train_or_load
+from save_outputs import save_firing_parquet, save_latents_parquet, save_to_hdf5
 from visualizations import (
-    plot_inputs, plot_loss_curves, plot_firing_overview,
-    plot_mean_firing, plot_latent_factors, plot_trial_latents,
-    plot_individual_neurons, plot_mean_neurons_across_tastes,
-    plot_pred_vs_true_neurons, plot_aic_bic_summary, plot_loo_diagnostics,
+    plot_aic_bic_summary,
+    plot_firing_overview,
+    plot_individual_neurons,
+    plot_inputs,
+    plot_latent_factors,
+    plot_loo_diagnostics,
+    plot_loss_curves,
+    plot_mean_firing,
+    plot_mean_neurons_across_tastes,
+    plot_pred_vs_true_neurons,
+    plot_trial_latents,
 )
-from save_outputs import save_to_hdf5, save_latents_parquet, save_firing_parquet
-# load in the configs: 
+
+# load in the configs:
 config_path = '/home/vincent/Senior thesis work/blechRNN-master/config/blechrnn_config.json'
 
 config, paths, params, criterion = load_config(config_path)
 
-from ephys_data import ephys_data
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-validation_mode = params.get('validation_mode', 'split') # note 'split' is the default if nothing is specified. 
+validation_mode = params.get('validation_mode', 'split')  # note 'split' is the default if nothing is specified.
 print(f"Validation mode: {validation_mode}")
 # ----------------------------------------------------------------
 # Loop over datasets
@@ -129,7 +137,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
                 model_save_path=model_save_path,
                 artifacts_dir=artifacts_dir,
                 taste_ind=taste_ind,
-                loo_train_steps = params.get('loo_train_steps'),
+                loo_train_steps=params.get('loo_train_steps'),
                 loo_patience=params.get('loo_patience')
             )
 
@@ -161,7 +169,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
             )
 
         info_criteria_all[taste_ind] = info_criteria
-        
+
         # --- LOO diagnostics (only in LOO mode) ---
         if validation_mode == 'loo':
             plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, plots_dir)
@@ -198,9 +206,9 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         # --- Per-taste plots ---
         plot_loss_curves(loss, cross_val_loss, dataset_name, taste_ind, plots_dir)
         plot_firing_overview(pred_firing, prep['binned_spikes'],
-                            dataset_name, taste_ind, plots_dir)
+                             dataset_name, taste_ind, plots_dir)
         plot_mean_firing(pred_firing, prep['binned_spikes'],
-                        dataset_name, taste_ind, plots_dir)
+                         dataset_name, taste_ind, plots_dir)
         plot_latent_factors(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_trial_latents(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_individual_neurons(

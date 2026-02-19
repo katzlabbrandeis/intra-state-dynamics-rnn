@@ -1,21 +1,19 @@
 """
-Model training and logic. 
+Model training and logic.
 """
-import os
 import json
+import os
 import time
+
 import numpy as np
 import torch
 from model import autoencoderRNN
-from train import (
-    train_model, compute_aic_bic,
-    poisson_log_likelihood, count_parameters, MSELoss,
-)
-
+from train import MSELoss, compute_aic_bic, count_parameters, poisson_log_likelihood, train_model
 
 # ----------------------------------------------------------------
 # Mode 1: Standard train/test split
 # ----------------------------------------------------------------
+
 
 def train_or_load(
         input_size,
@@ -36,7 +34,7 @@ def train_or_load(
         model_save_path=None,
         artifacts_dir=None,
         taste_ind=None,
-        ):
+):
     """
     Train a new model or load an existing one.
     Computes AIC/BIC in both cases.
@@ -89,7 +87,6 @@ def train_or_load(
     return net, loss, cross_val_loss, info_criteria
 
 
-
 # ----------------------------------------------------------------
 # Mode 2: LOO evaluation + final retrain on all data
 # ----------------------------------------------------------------
@@ -115,7 +112,7 @@ def loo_then_train(
         verbose=True,
         loo_train_steps=None,
         loo_patience=None,
-        ):
+):
     """
     Phase 1: LOO cross-validation to get robust AIC/BIC.
              Uses loo_train_steps/loo_patience if provided (faster folds).
@@ -300,6 +297,7 @@ def loo_then_train(
 # ----------------------------------------------------------------
 # Shared: forward pass for predictions
 # ----------------------------------------------------------------
+
 
 def run_prediction(net, inputs_tensor, device):
     """

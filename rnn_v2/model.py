@@ -9,7 +9,7 @@ https://cbmm.mit.edu/video/tutorial-recurrent-neural-networks-cognitive-neurosci
 Recurrent neural network for firing rate estimation
 
 Inputs:
-    - spike trains (with binning) 
+    - spike trains (with binning)
     - external input
 Outputs:
     - firing rates
@@ -25,16 +25,18 @@ Initialization:
 Start prior to stim so initial conditions don't matter as much
 """
 
+import math
+
+import matplotlib.pyplot as plt
+
 # Import common packages
 import numpy as np
-import matplotlib.pyplot as plt
 
 # Define networks
 import torch
 import torch.nn as nn
-from torch.nn import init
 from torch.nn import functional as F
-import math
+from torch.nn import init
 
 
 class CTRNN(nn.Module):
@@ -98,7 +100,7 @@ class CTRNN(nn.Module):
 
         # Loop through time
         output = []
-        steps = range(input.size(0)) # seq_len
+        steps = range(input.size(0))  # seq_len
         for i in steps:
             hidden = self.recurrence(input[i], hidden)
             output.append(hidden)
@@ -123,6 +125,7 @@ class CTRNN_plus_output(nn.Module):
         out: tensor of shape (Seq Len, Batch, Output size)
         rnn_output: tensor of shape (Seq Len, Batch, Hidden size)
     """
+
     def __init__(self, input_size, hidden_size, output_size, **kwargs):
         super().__init__()
 
@@ -137,6 +140,7 @@ class CTRNN_plus_output(nn.Module):
         out = self.fc(rnn_output)
         return out, rnn_output
 
+
 class autoencoderRNN(nn.Module):
     """
     Input and output transformations are encoder and decoder architectures
@@ -146,15 +150,16 @@ class autoencoderRNN(nn.Module):
 
     Can add dropout to RNN and autoencoder layers
     """
+
     def __init__(
-            self, 
-            input_size, 
-            hidden_size,  
-            output_size, 
-            rnn_layers = 1,
-            dropout = 0.2,
-            bidirectional = False,
-            ):
+            self,
+            input_size,
+            hidden_size,
+            output_size,
+            rnn_layers=1,
+            dropout=0.2,
+            bidirectional=False,
+    ):
         """
         3 sigmoid layers for input and output each, to project between:
             encoder : input -> latent
@@ -163,27 +168,27 @@ class autoencoderRNN(nn.Module):
         """
         super(autoencoderRNN, self).__init__()
         self.encoder = nn.Sequential(
-                nn.Linear(input_size, sum((input_size, hidden_size))//2),
-                nn.Sigmoid(),
-                nn.Linear(sum((input_size, hidden_size))//2, hidden_size),
-                nn.Sigmoid(),
-                )
+            nn.Linear(input_size, sum((input_size, hidden_size))//2),
+            nn.Sigmoid(),
+            nn.Linear(sum((input_size, hidden_size))//2, hidden_size),
+            nn.Sigmoid(),
+        )
         self.rnn = nn.RNN(
-                hidden_size, 
-                hidden_size, 
-                rnn_layers, 
-                batch_first=False, 
-                bidirectional=bidirectional,
-                dropout = dropout,
-                )
-        # NOTE: It appeasrs that the decoder has no final activation layer-- could this leave outputs unbounded? 
-        # though hmm this probably should not *really* matter, it's worth a note. 
+            hidden_size,
+            hidden_size,
+            rnn_layers,
+            batch_first=False,
+            bidirectional=bidirectional,
+            dropout=dropout,
+        )
+        # NOTE: It appeasrs that the decoder has no final activation layer-- could this leave outputs unbounded?
+        # though hmm this probably should not *really* matter, it's worth a note.
         self.decoder = nn.Sequential(
-                nn.Linear(hidden_size, sum((hidden_size, output_size))//2),
-                nn.Sigmoid(),
-                nn.Linear(sum((hidden_size, output_size))//2, output_size),
-                )
-        self.en_dropout = nn.Dropout(p = dropout)
+            nn.Linear(hidden_size, sum((hidden_size, output_size))//2),
+            nn.Sigmoid(),
+            nn.Linear(sum((hidden_size, output_size))//2, output_size),
+        )
+        self.en_dropout = nn.Dropout(p=dropout)
 
     def forward(self, x):
         out = self.encoder(x)

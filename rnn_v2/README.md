@@ -1,7 +1,7 @@
 # blechRNN — Refactored
 
-NOTE: this code has been partially ai-generated, subject to full human review by yours truly (Vincent). 
-This is a WIP, as LOO will ultimately be used to optimize this model further. 
+NOTE: this code has been partially ai-generated, subject to full human review by yours truly (Vincent).
+This is a WIP, as LOO will ultimately be used to optimize this model further.
 
 Autoencoder-RNN for predicting firing rates from binned spike trains. Encoder compresses inputs to a latent space, an RNN learns temporal dynamics in that space, and a decoder projects back to firing rate predictions.
 

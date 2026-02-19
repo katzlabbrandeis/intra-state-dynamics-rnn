@@ -1,6 +1,6 @@
 """
-pre-processor for the data prior to being fed into the actual rnn. 
-performs: 
+pre-processor for the data prior to being fed into the actual rnn.
+performs:
 spike binning, scaling, PCA, context concatenation,
 and train/test splitting.
 
@@ -9,8 +9,8 @@ and train/test splitting.
 
 import numpy as np
 import torch
-from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 
 def bin_spikes(taste_spikes, bin_size):
