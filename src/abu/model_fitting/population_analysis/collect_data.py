@@ -130,7 +130,6 @@ best_fit_data_df_fp = os.path.join(
 best_fit_data_df = pd.read_pickle(best_fit_data_df_fp)
 
 
-
 # Generate splits and save to disk
 n_splits = 10
 train_test_frac = 0.75 # Splitting along neuron dimension, so this is the fraction of neurons to use for training
@@ -168,7 +167,51 @@ for idx, row in tqdm(best_fit_data_df.iterrows()):
 # Combine into a dataframe and write to disk
 split_data_df = pd.DataFrame(split_data_list)
 split_data_df_fp = os.path.join(
-    artifacts_subdir, 'split_data_df.pkl'
+    artifacts_subdir, 'neuron_split_data_df.pkl'
+    )
+with open(split_data_df_fp, 'wb') as f:
+    dump(split_data_df, f)
+
+##############################
+# Also generate a temporal split (across trials)
+
+n_splits = 10
+train_test_frac = 0.75 # Splitting along neuron dimension, so this is the fraction of neurons to use for training
+split_data_list = []
+for idx, row in tqdm(best_fit_data_df.iterrows()):
+    spike_trains = row['spike_trains']
+    original_array_shape = spike_trains.shape
+
+    n_trials = spike_trains.shape[0]
+    trial_indices = np.arange(n_trials)
+    for split_ind in range(n_splits):
+        np.random.shuffle(trial_indices)
+        train_trials = trial_indices[:int(train_test_frac * n_trials)]
+        test_trials = trial_indices[int(train_test_frac * n_trials):]
+
+        train_spike_trains = spike_trains[train_trials, :, :]
+        test_spike_trains = spike_trains[test_trials, :, :]
+
+        train_spike_times, train_shape = SpikeRasterIO.spike_train_to_spike_times(train_spike_trains)
+        test_spike_times, test_shape = SpikeRasterIO.spike_train_to_spike_times(test_spike_trains)
+
+        split_data_list.append({
+            'basename': row['basename'],
+            'taste_name': row['taste_name'],
+            'dat_type': row['dat_type'],
+            'split_ind': split_ind,
+            'train_trials': train_trials,
+            'test_trials': test_trials,
+            'train_spike_times': train_spike_times,
+            'train_shape': train_shape,
+            'test_spike_times': test_spike_times,
+            'test_shape': test_shape
+        })
+
+# Combine into a dataframe and write to disk
+split_data_df = pd.DataFrame(split_data_list)
+split_data_df_fp = os.path.join(
+    artifacts_subdir, 'trial_split_data_df.pkl'
     )
 with open(split_data_df_fp, 'wb') as f:
     dump(split_data_df, f)
