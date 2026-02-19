@@ -37,6 +37,8 @@ def prepare_data(spike_data, bin_size):
 def train_rnn_model(
         inputs, 
         labels, 
+        test_inputs,
+        test_labels,
         train_steps, 
         hidden_size, 
         output_size, 
@@ -57,21 +59,25 @@ def train_rnn_model(
         strictly_positive=strictly_positive,
     )
     net.to(device)
-    net, loss, cross_val_loss = train_model(
+    net, loss, cross_val_loss, best_cross_val_loss = train_model(
         net,
         inputs,
         labels,
+        test_inputs = test_inputs,
+        test_labels = test_labels,
         output_size=output_size,
         lr=lr,
         train_steps=train_steps,
         criterion=PoissonLoss(),
     )
-    return net, loss, cross_val_loss
+    return net, loss, cross_val_loss, best_cross_val_loss
 
 def train_rnn_all_tastes(
         spike_data,
         taste_durations,
         params_dict,
+        test_fraction=None,
+        test_trials=None,
         ):
 
     """
@@ -96,6 +102,8 @@ def train_rnn_all_tastes(
         - loss: list of training losses over time
         - cross_val_loss: list of cross-validation losses over time
     """
+    # Make sure both test_fraction and test_trials are not specified at the same time
+    assert not (test_fraction is not None and test_trials is not None), "Cannot specify both test_fraction and test_trials. Please choose one method for selecting test data."
 
     assert spike_data.ndim == 4, "Spike data must be 4D (tastes x trials x neurons x time)"
     assert spike_data.shape[0] == len(taste_durations), "Number of tastes in spike data and taste durations must match"
@@ -136,6 +144,7 @@ def train_rnn_all_tastes(
     taste_num_broad = np.broadcast_to(taste_num_scaled[None,:,None], inputs.shape[:-1])
 
     # Stack trials across tastes so that 2nd dimension is trials*tastes
+    # Shape: time_bins x (tastes*trials) x neurons
     inputs_long = inputs.reshape(inputs.shape[0], -1, inputs.shape[-1])
     stim_time_long = stim_time.reshape(stim_time.shape[0], -1)
     trial_num_long = trial_num_broad.reshape(trial_num_broad.shape[0], -1)
@@ -156,6 +165,45 @@ def train_rnn_all_tastes(
     # inputs = inputs[forecast_bins:]
     labels = inputs_long[forecast_bins:]
 
+    if test_fraction is not None or test_trials is not None: 
+        if test_fraction is not None:
+            print(f"Splitting data into training and test sets with test_fraction={test_fraction}...")
+            train_size = int(inputs_long_plus_context.shape[1] * (1 - test_fraction))
+            trial_inds = np.arange(inputs_long_plus_context.shape[1])
+            train_inds = np.random.choice(trial_inds, size=train_size, replace=False)
+            test_inds = np.setdiff1d(trial_inds, train_inds)
+        else:
+            print(f"Splitting data into training and test sets with specified test_trials={test_trials}...")
+            trial_inds = np.arange(inputs_long_plus_context.shape[1])
+            test_inds = np.array(test_trials)
+            train_inds = np.setdiff1d(trial_inds, test_inds)
+
+        train_inputs = inputs_long_plus_context[:, train_inds]
+        test_inputs = inputs_long_plus_context[:, test_inds]
+        train_labels = labels[:, train_inds]
+        test_labels = labels[:, test_inds]
+
+        split_dict = dict(
+            train_inds=train_inds,
+            test_inds=test_inds,
+            )
+    else:
+        train_inputs = inputs_long_plus_context
+        train_labels = labels
+        test_inputs = None
+        test_labels = None
+        split_dict = None 
+
+    # labels_torch = torch.from_numpy(labels).type(torch.float32)
+    # inputs_torch = torch.from_numpy(inputs_long_plus_context).type(torch.float)
+    train_labels_torch = torch.from_numpy(train_labels).type(torch.float32)
+    train_inputs_torch = torch.from_numpy(train_inputs).type(torch.float32)
+    test_labels_torch = torch.from_numpy(test_labels).type(torch.float32) if test_labels is not None else None
+    test_inputs_torch = torch.from_numpy(test_inputs).type(torch.float32) if test_inputs is not None else None
+
+    # Determine sizes for model architecture
+    input_size = inputs_long_plus_context.shape[-1]
+    output_size = labels.shape[-1]
 
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -164,26 +212,27 @@ def train_rnn_all_tastes(
         device = torch.device("cpu")
         print("Running on the CPU")
 
-    labels_torch = torch.from_numpy(labels).type(torch.float32)
-    inputs_torch = torch.from_numpy(inputs_long_plus_context).type(torch.float)
+    train_inputs_torch = train_inputs_torch.to(device)
+    train_labels_torch = train_labels_torch.to(device)
+    test_inputs_torch = test_inputs_torch.to(device) if test_inputs_torch is not None else None
+    test_labels_torch = test_labels_torch.to(device) if test_labels_torch is not None else None
 
-    input_size = inputs_long_plus_context.shape[-1]
-    output_size = labels.shape[-1]
-
-    train_inputs = inputs_torch.to(device)
-    train_labels = labels_torch.to(device)
+    # train_inputs = inputs_torch.to(device)
+    # train_labels = labels_torch.to(device)
 
     print(f"Training RNN model for {train_steps} steps...")
     print(f"Model configuration: hidden_size={hidden_size}, rnn_layers={rnn_layers}, "
-          f"bidirectional={bidirectional}, dropout={dropout}")
+          f"bidirectional={bidirectional}, dropout={dropout}, strictly_positive={strictly_positive}, lr={lr}")
     
-    net, loss, cross_val_loss = train_rnn_model(
-        train_inputs, 
-        train_labels, 
-        train_steps, 
-        hidden_size, 
-        output_size, 
-        device,
+    net, loss, cross_val_loss, best_cross_val_loss = train_rnn_model(
+        inputs = train_inputs_torch, 
+        labels = train_labels_torch, 
+        test_inputs=test_inputs_torch,
+        test_labels=test_labels_torch,
+        train_steps = train_steps, 
+        hidden_size = hidden_size, 
+        output_size = output_size, 
+        device = device,
         rnn_layers=rnn_layers,
         dropout=dropout,
         bidirectional=bidirectional,
@@ -193,13 +242,13 @@ def train_rnn_all_tastes(
 
     # Get predictions
     print("Generating predictions from trained model...")
-    outputs, latent = net(inputs_torch.to(device))
+    outputs, latent = net(train_inputs_torch)
     # Shape: time_bins x (tastes*trials) x output_size
     outputs = outputs.detach().cpu().numpy()
     # Shape: time_bins x (tastes*trials) x latent_size
     latent = latent.detach().cpu().numpy()
 
-    return net, loss, cross_val_loss, outputs, latent
+    return net, loss, cross_val_loss, best_cross_val_loss, outputs, latent, split_dict
 
 # # Bundle all inputs into a single pkl so training can be parallelized
 # inputs_dict = dict(
