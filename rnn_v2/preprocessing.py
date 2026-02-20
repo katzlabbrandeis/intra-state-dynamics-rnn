@@ -1,6 +1,6 @@
 """
-pre-processor for the data prior to being fed into the actual rnn.
-performs:
+pre-processor for the data prior to being fed into the actual rnn. 
+performs: 
 spike binning, scaling, PCA, context concatenation,
 and train/test splitting.
 
@@ -9,8 +9,8 @@ and train/test splitting.
 
 import numpy as np
 import torch
-from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 
 def bin_spikes(taste_spikes, bin_size):
@@ -200,12 +200,20 @@ def preprocess_taste(taste_spikes, bin_size, stim_time_val, use_pca=False):
     # Tensors
     inputs_tensor, labels_tensor = prepare_tensors(inputs_plus_context, inputs)
 
+    # now also adding in the raw count labels specifically for the Poisson LL -- no z-scored or PCA'd
+    # binned_spikes is (trials, neurons, time), need (time, trials, neurons)
+    raw_inputs = np.moveaxis(binned_spikes.copy(), -1, 0)  # (time, trial, neuron)
+    raw_labels_tensor = torch.tensor(
+        raw_inputs[1:], dtype=torch.float32
+    )  # same time shift as labels_tensor
+
     return dict(
         binned_spikes=binned_spikes,
         inputs=inputs,
         inputs_plus_context=inputs_plus_context,
         inputs_tensor=inputs_tensor,
         labels_tensor=labels_tensor,
+        raw_labels_tensor=raw_labels_tensor,
         input_size=input_size,
         output_size=output_size,
         num_neurons=num_neurons,

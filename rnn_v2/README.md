@@ -1,11 +1,26 @@
 # blechRNN — Refactored
 
-NOTE: this code has been partially ai-generated, subject to full human review by yours truly (Vincent).
-This is a WIP, as LOO will ultimately be used to optimize this model further.
-
 Autoencoder-RNN for predicting firing rates from binned spike trains. Encoder compresses inputs to a latent space, an RNN learns temporal dynamics in that space, and a decoder projects back to firing rate predictions.
 
-## Files
+# NOTE ON THE OPTIMIZATION GAME
+
+For the past few nights, I've set up a Leave One Out (LOO) schema to evaluate the model perforamce. 
+To this point, the file sweep_params.py is designed to do a thinned down / structured version of a grid search to find the optimal params.
+It does this by minimizing log likelihood; we can do this via Poisson likelihood (one can argue this is more scientifically salient as the loss function 
+for the model is poisson (?) and also not assuming gaussian) or via minimizing Gaussian log-likelihood, which makes particular sense given the MSE function. 
+
+However, after doing all this, I'm not convinced that's the best way to actually optimize the model-- as ideally, the reconstructed firing rates are as 
+close as humanly possible to the input firing rates. 
+There is also the concern I have with the latents themselves and almost overfitting. Ultimately, I still think that I can optimize the params somewhat from here. 
+
+Ultimately, given that I'm doing this between the hours of 8 pm and 2 am, my decision making capacity can be somewhat imparied. I also don't always have a good idea 
+of the theoretical and model-performance backing of what I'm doing. 
+
+I must have speaks with abu!! 
+
+
+
+## Files (there have been a few more added, this will be updated)
 
 | File | Purpose |
 |---|---|
@@ -36,12 +51,12 @@ Set in `blechrnn_config.json` under `"parameters"`:
     "loss_name": "mse",
     "validation_mode": "split",
     "loo_train_steps": 3000,
-    "loo_patience": 75
+    "loo_patience": 15
 }
 ```
 
 - `validation_mode`: `"split"` (default) or `"loo"` — see below.
-- `loo_train_steps` / `loo_patience`: Shorter training settings used only for LOO folds, not the final model. Reduces LOO runtime without affecting (I think/I hope; the loss plots look alright at least) the quality of the final model.
+- `loo_train_steps` / `loo_patience`: Shorter training settings used only for LOO folds, not the final model. Reduces LOO runtime without affecting the quality of the final model.
 
 ## Model evaluation metrics
 
@@ -84,22 +99,20 @@ Same idea as AIC but the complexity penalty scales with `ln(n_observations)`. Fo
 Randomly holds out 25% of trials as a test set. Trains on the remaining 75%. Computes AIC/BIC on the held-out test set. The saved model has only ever seen 75% of the data.
 
 **Pros:** Fast — one training run per taste.
-**Cons:** With small trial counts (~30 trials, 7–8 in the test set), results are noisy and depend on which trials happen to land in the test set. Run it again with a different random seed and you may get different latent representations of the data (and AIC/BIC values). This concern began to manifest when I realized that multiple runs of the original RNN did not always align with each other; as we make claims to do with oscillatory latents and other types of non-oscillatory latents, I worry that we may not be able to get away with the train-test split. The saved model is also suboptimal because it never trained on the held-out trials.
+**Cons:** With small trial counts (~30 trials, 7–8 in the test set), results are noisy and depend on which trials happen to land in the test set. Run it again with a different random seed and you may get different AIC/BIC values. The saved model is also suboptimal because it never trained on the held-out trials.
 
 ### `"loo"` — Leave-one-out cross-validation
 
 Two phases:
 
-**Phase 1 (evaluation):** For each of the N trials, hold it out, train on the other N-1, and compute the Poisson log-likelihood on the single held-out trial. Repeat for all N trials. Sum the per-trial log-likelihoods to get a total LOO log-likelihood, then compute AIC/BIC from that. Every trial is evaluated exactly once on a model that never saw it. No randomness in the split — deterministic (literally goes one at a time) up unto the point where we train, which by nature is stochastic.
+**Phase 1 (evaluation):** For each of the N trials, hold it out, train on the other N-1, and compute the Poisson log-likelihood on the single held-out trial. Repeat for all N trials. Sum the per-trial log-likelihoods to get a total LOO log-likelihood, then compute AIC/BIC from that. Every trial is evaluated exactly once on a model that never saw it. No randomness in the split — deterministic up to training stochasticity.
 
-**Phase 2 (final model):** After LOO evaluation is complete, train a single model on ALL N trials. This is the model that gets saved and used for all downstream outputs (predicted firing rates, latent trajectories, plots, HDF5, Parquet). **BIG FAT NOTABLE CONCERN WITH THIS:** By training the model on *all* the data, I am supremely worried that we're effectively generating an identity matrix. I have not yet tested this; that is on the to-do list. 
+**Phase 2 (final model):** After LOO evaluation is complete, train a single model on ALL N trials. This is the model that gets saved and used for all downstream outputs (predicted firing rates, latent trajectories, plots, HDF5, Parquet).
 
-> Also note: One of the main original motivations of the LOO method was to create a platform on which I can optimize hyperparameters for these models. LOO gives a convienent way to visualize if a set of parameters is robust across all the data. 
-
-The logic: LOO answers "is this architecture good?" (Phase 1), then "give me the best possible model from this architecture assuming you're only interested in latents and less interested in the fact the model can be forming an identity matrix by training on all the data" (Phase 2). Reservations aside, these are separate questions: once you've validated the architecture and hyperparameters, there's no reason to withhold data from the final model.
+The logic: LOO answers "is this architecture good?" (Phase 1), then "give me the best possible model from this architecture" (Phase 2). These are separate questions — once you've validated the architecture, there's no reason to withhold data from the final model.
 
 **Pros:** Robust AIC/BIC with no sensitivity to split randomness. The final model uses all available data. Well-suited for small trial counts.
-**Cons:** Takes a long ass time. Trains N models per taste (30 folds × 4 tastes = 120 training runs per dataset). Mitigated by using `loo_train_steps` and `loo_patience` for faster folds, plus `quiet=True` to suppress fold output.
+**Cons:** Trains N models per taste (30 folds × 4 tastes = 120 training runs per dataset). Mitigated by using `loo_train_steps` and `loo_patience` for faster folds, plus `quiet=True` to suppress fold output.
 
 ### LOO diagnostics plot
 

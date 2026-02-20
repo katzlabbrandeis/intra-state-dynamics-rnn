@@ -1,10 +1,9 @@
 """
-post-processing: taking the reconstructed predicted firing rates back out into neuron space.
-Inverse PCA, inverse scaling.
+post-processing: taking the reconstructed predicted firing rates back out into neuron space. 
+Inverse PCA, inverse scaling. 
 
 """
 import numpy as np
-
 
 def reconstruct_firing(outs, scaler, pca_obj=None, num_neurons=None, use_pca=False):
     """

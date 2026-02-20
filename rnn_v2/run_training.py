@@ -1,19 +1,21 @@
 """
-Model training and logic.
+Model training and logic. 
 """
-import json
 import os
+import json
 import time
-
 import numpy as np
 import torch
 from model import autoencoderRNN
-from train import MSELoss, compute_aic_bic, count_parameters, poisson_log_likelihood, train_model
+from train import (
+    train_model, compute_aic_bic,
+    poisson_log_likelihood, count_parameters, MSELoss, gaussian_log_likelihood
+)
+
 
 # ----------------------------------------------------------------
 # Mode 1: Standard train/test split
 # ----------------------------------------------------------------
-
 
 def train_or_load(
         input_size,
@@ -34,7 +36,7 @@ def train_or_load(
         model_save_path=None,
         artifacts_dir=None,
         taste_ind=None,
-):
+        ):
     """
     Train a new model or load an existing one.
     Computes AIC/BIC in both cases.
@@ -87,10 +89,15 @@ def train_or_load(
     return net, loss, cross_val_loss, info_criteria
 
 
+
 # ----------------------------------------------------------------
 # Mode 2: LOO evaluation + final retrain on all data
 # ----------------------------------------------------------------
+#### NOTE: this LOO shchema is currently leaving one TRIAL out, not one neuron out. 
+# Leave one neuron out BEFORE the model gets trained is a module coming in the future; one thing at a time. 
+# I'm doing something similar for model evaluation but where we withhold from some statistics and see how that impacts things...
 
+# ultimately, I will want to make a LOO shcema for neurons prior to training. But that comes AFTER (maybe? talk to abu)
 
 def loo_then_train(
         inputs_tensor,
@@ -112,9 +119,14 @@ def loo_then_train(
         verbose=True,
         loo_train_steps=None,
         loo_patience=None,
-):
+        scaler=None,
+        pca_obj=None,
+        raw_labels_tensor=None,
+        ):
     """
     Phase 1: LOO cross-validation to get robust AIC/BIC.
+             Computes both Gaussian LL (on z-scored data, consistent with MSE)
+             and Poisson LL (on raw counts, scientifically meaningful).
              Uses loo_train_steps/loo_patience if provided (faster folds).
     Phase 2: Retrain a single model on ALL trials for downstream use.
              Uses full train_steps/patience.
@@ -123,7 +135,7 @@ def loo_then_train(
         net: final model trained on all data
         loss: training loss history (from final retrain)
         cross_val_loss: {} (no held-out set for final model)
-        info_criteria: dict with LOO-based AIC/BIC + per-trial LL
+        info_criteria: dict with LOO-based AIC/BIC (Gaussian + Poisson) + per-trial LLs
     """
     n_trials = inputs_tensor.shape[1]
 
@@ -154,10 +166,16 @@ def loo_then_train(
         n_params = count_parameters(dummy_net)
         del dummy_net
 
-        per_trial_ll = []
+        per_trial_gaussian_ll = []
+        per_trial_poisson_ll = []
         per_trial_train_loss = []
         per_fold_loss_history = []
         per_fold_n_steps = []
+        has_raw_labels = raw_labels_tensor is not None and scaler is not None
+        # debugs: 
+        #print(f"  [DEBUG] raw_labels_tensor is None: {raw_labels_tensor is None}")
+        #print(f"  [DEBUG] scaler is None: {scaler is None}")
+        #print(f"  [DEBUG] has_raw_labels: {has_raw_labels}")
         total_start = time.time()
 
         for j in range(n_trials):
@@ -187,43 +205,114 @@ def loo_then_train(
                 quiet=True,
             )
 
-            # Evaluate held-out trial
+            # Evaluate held-out trial — Gaussian LL (on z-scored data)
             fold_net.eval()
             with torch.no_grad():
                 pred, _ = fold_net(fold_test_inputs)
-                pred = torch.clamp(pred, min=1e-8)
-            ll = poisson_log_likelihood(pred, fold_test_labels)
-            per_trial_ll.append(ll)
+
+            g_ll = gaussian_log_likelihood(pred, fold_test_labels)
+            per_trial_gaussian_ll.append(g_ll)
+
+            # Evaluate held-out trial — Poisson LL (on raw count data)
+            # temporarily adding some debugs. 
+            if has_raw_labels:
+                fold_raw_labels = raw_labels_tensor[:, j:j+1]
+                pred_np = pred.cpu().numpy()
+                pred_long = pred_np.reshape(-1, pred_np.shape[-1])
+                
+                if j == 0:  # debug first fold only
+                    #print(f"    [DEBUG] pred_long shape after reshape: {pred_long.shape}")
+                    #print(f"    [DEBUG] pca_obj: {pca_obj}")
+                    if pca_obj is not None:
+                        print(f"    [DEBUG] pca n_components: {pca_obj.n_components_}")
+                
+                if pca_obj is not None:
+                    try:
+                        pred_long = pca_obj.inverse_transform(pred_long)
+                        #if j == 0:
+                            #print(f"    [DEBUG] pred_long after inverse PCA: {pred_long.shape}")
+                    except Exception as e:
+                        print(f"    [DEBUG] PCA inverse FAILED: {e}")
+                        pred_long = None
+                
+                if pred_long is not None:
+                    try:
+                        pred_long = scaler.inverse_transform(pred_long)
+                        pred_long = np.clip(pred_long, a_min=1e-8, a_max=None)
+                        pred_counts = torch.tensor(pred_long, dtype=torch.float32)
+                        raw_flat = fold_raw_labels.reshape(-1, fold_raw_labels.shape[-1])
+                        #if j == 0:
+                            #print(f"    [DEBUG] pred_counts shape: {pred_counts.shape}")
+                            #print(f"    [DEBUG] raw_flat shape: {raw_flat.shape}")
+                        if pred_counts.shape == raw_flat.shape:
+                            p_ll = poisson_log_likelihood(pred_counts, raw_flat)
+                        else:
+                            print(f"    [DEBUG] SHAPE MISMATCH: {pred_counts.shape} vs {raw_flat.shape}")
+                            p_ll = float('nan')
+                    except Exception as e:
+                        print(f"    [DEBUG] scaler inverse FAILED: {e}")
+                        p_ll = float('nan')
+                else:
+                    p_ll = float('nan')
+                per_trial_poisson_ll.append(p_ll)
+
             per_trial_train_loss.append(fold_loss[-1])
             per_fold_loss_history.append(fold_loss)
             per_fold_n_steps.append(len(fold_loss))
 
             if verbose:
                 elapsed = time.time() - fold_start
+                p_str = f" | Poisson LL: {per_trial_poisson_ll[-1]:.2f}" if has_raw_labels else ""
                 print(f"    Fold {j+1}/{n_trials} | "
-                      f"LL: {ll:.2f} | "
+                      f"Gauss LL: {g_ll:.2f}{p_str} | "
                       f"Final loss: {fold_loss[-1]:.4f} | "
                       f"{elapsed:.1f}s")
 
             del fold_net
 
-        # Aggregate LOO results
-        total_ll = sum(per_trial_ll)
-        n_obs = labels_tensor.numel()
-        aic = 2 * n_params - 2 * total_ll
-        bic = n_params * np.log(n_obs) - 2 * total_ll
+        # Aggregate LOO results — Gaussian (primary, consistent with MSE training)
+        gaussian_total_ll = sum(per_trial_gaussian_ll)
+        n_obs_zscore = labels_tensor.numel()
+        gaussian_aic = 2 * n_params - 2 * gaussian_total_ll
+        gaussian_bic = n_params * np.log(n_obs_zscore) - 2 * gaussian_total_ll
+
+        # Aggregate LOO results — Poisson (on raw counts)
+        if has_raw_labels and per_trial_poisson_ll:
+            valid_poisson = [v for v in per_trial_poisson_ll if not np.isnan(v)]
+            if valid_poisson:
+                poisson_total_ll = sum(valid_poisson)
+                n_obs_raw = raw_labels_tensor.numel()
+                poisson_aic = 2 * n_params - 2 * poisson_total_ll
+                poisson_bic = n_params * np.log(n_obs_raw) - 2 * poisson_total_ll
+            else:
+                poisson_total_ll = float('nan')
+                poisson_aic = float('nan')
+                poisson_bic = float('nan')
+        else:
+            per_trial_poisson_ll = []
+            poisson_total_ll = float('nan')
+            poisson_aic = float('nan')
+            poisson_bic = float('nan')
+
         total_elapsed = time.time() - total_start
 
         info_criteria = dict(
-            aic=aic,
-            bic=bic,
-            log_likelihood=total_ll,
-            per_trial_ll=per_trial_ll,
+            # Gaussian (primary — consistent with MSE)
+            aic=gaussian_aic,
+            bic=gaussian_bic,
+            log_likelihood=gaussian_total_ll,
+            per_trial_ll=per_trial_gaussian_ll,
+            # Poisson (on raw counts)
+            poisson_aic=poisson_aic,
+            poisson_bic=poisson_bic,
+            poisson_log_likelihood=poisson_total_ll,
+            per_trial_poisson_ll=per_trial_poisson_ll,
+            # Shared
             per_trial_train_loss=per_trial_train_loss,
             per_fold_loss_history=per_fold_loss_history,
             per_fold_n_steps=per_fold_n_steps,
             n_params=n_params,
-            n_observations=n_obs,
+            n_observations=n_obs_zscore,
             n_trials=n_trials,
             hidden_size=hidden_size,
             eval_set='loo',
@@ -234,18 +323,29 @@ def loo_then_train(
         print(f"    Folds:         {n_trials}")
         print(f"    Fold settings: train_steps={fold_train_steps}, patience={fold_patience}")
         print(f"    Params:        {n_params}")
-        print(f"    Total LL:      {total_ll:.2f}")
-        print(f"    Mean LL/trial: {np.mean(per_trial_ll):.2f} "
-              f"+/- {np.std(per_trial_ll):.2f}")
-        print(f"    AIC:           {aic:.2f}")
-        print(f"    BIC:           {bic:.2f}")
+        print(f"    --- Gaussian (z-scored space) ---")
+        print(f"    Total LL:      {gaussian_total_ll:.2f}")
+        print(f"    Mean LL/trial: {np.mean(per_trial_gaussian_ll):.2f} "
+              f"+/- {np.std(per_trial_gaussian_ll):.2f}")
+        print(f"    AIC:           {gaussian_aic:.2f}")
+        print(f"    BIC:           {gaussian_bic:.2f}")
+        if not np.isnan(poisson_total_ll):
+            print(f"    --- Poisson (raw count space) ---")
+            print(f"    Total LL:      {poisson_total_ll:.2f}")
+            print(f"    Mean LL/trial: {np.nanmean(per_trial_poisson_ll):.2f} "
+                  f"+/- {np.nanstd(per_trial_poisson_ll):.2f}")
+            print(f"    AIC:           {poisson_aic:.2f}")
+            print(f"    BIC:           {poisson_bic:.2f}")
+        else: 
+            print("WARN: Poisson LL (raw count space) is nan for some reason.")
         print(f"    Time:          {total_elapsed:.1f}s")
 
         # Cache LOO results
         if loo_cache_path:
             save_dict = {k: v for k, v in info_criteria.items()
                          if not isinstance(v, list)}
-            save_dict['per_trial_ll'] = per_trial_ll
+            save_dict['per_trial_ll'] = per_trial_gaussian_ll
+            save_dict['per_trial_poisson_ll'] = per_trial_poisson_ll
             save_dict['per_trial_train_loss'] = per_trial_train_loss
             with open(loo_cache_path, 'w') as f:
                 json.dump(save_dict, f, indent=2)
@@ -297,7 +397,6 @@ def loo_then_train(
 # ----------------------------------------------------------------
 # Shared: forward pass for predictions
 # ----------------------------------------------------------------
-
 
 def run_prediction(net, inputs_tensor, device):
     """

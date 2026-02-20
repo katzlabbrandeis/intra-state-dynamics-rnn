@@ -1,5 +1,5 @@
 """
-Part of a concerted effort to clean this script up in general to make it that much
+Part of a concerted effort to clean this script up in general to make it that much 
 easier to do model comparisons, etc
 
 run_rnn.py — Main orchestration script.
@@ -12,44 +12,37 @@ Loops over H5 datasets and tastes, calling modular functions for:
     - Visualization
     - Saving outputs
 
-NOTE: On the params json:
+NOTE: On the params json: 
 Config parameter "validation_mode":
     - "split" (default): standard train/test split
     - "loo": leave-one-out CV for AIC/BIC, then retrain on all trials
 
 """
-from ephys_data import ephys_data
 import os
-
 import numpy as np
 import torch
-from config_loader import load_config
-from postprocessing import reconstruct_firing
-from preprocessing import preprocess_taste, train_test_split_trials
-from run_training import loo_then_train, run_prediction, train_or_load
-from save_outputs import save_firing_parquet, save_latents_parquet, save_to_hdf5
-from visualizations import (
-    plot_aic_bic_summary,
-    plot_firing_overview,
-    plot_individual_neurons,
-    plot_inputs,
-    plot_latent_factors,
-    plot_loo_diagnostics,
-    plot_loss_curves,
-    plot_mean_firing,
-    plot_mean_neurons_across_tastes,
-    plot_pred_vs_true_neurons,
-    plot_trial_latents,
-)
 
-# load in the configs:
+from config_loader import load_config
+from preprocessing import preprocess_taste, train_test_split_trials
+from run_training import train_or_load, run_prediction, loo_then_train
+from postprocessing import reconstruct_firing
+from visualizations import (
+    plot_inputs, plot_loss_curves, plot_firing_overview,
+    plot_mean_firing, plot_latent_factors, plot_trial_latents,
+    plot_individual_neurons, plot_mean_neurons_across_tastes,
+    plot_pred_vs_true_neurons, plot_aic_bic_summary, plot_loo_diagnostics,
+)
+from save_outputs import save_to_hdf5, save_latents_parquet, save_firing_parquet
+from neuron_eval import evaluate_neurons
+# load in the configs: 
 config_path = '/home/vincent/Senior thesis work/blechRNN-master/config/blechrnn_config.json'
 
 config, paths, params, criterion = load_config(config_path)
 
+from ephys_data import ephys_data
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-validation_mode = params.get('validation_mode', 'split')  # note 'split' is the default if nothing is specified.
+validation_mode = params.get('validation_mode', 'split') # note 'split' is the default if nothing is specified. 
 print(f"Validation mode: {validation_mode}")
 # ----------------------------------------------------------------
 # Loop over datasets
@@ -71,6 +64,8 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
     output_path = os.path.join(paths['output_base_dir'], dataset_name)
     plots_dir = os.path.join(output_path, 'plots')
     artifacts_dir = os.path.join(output_path, 'artifacts')
+    model_eval_dir = os.path.join(output_path, 'model_eval') # specicifically for the LOO stuff
+    os.makedirs(model_eval_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
     os.makedirs(artifacts_dir, exist_ok=True)
 
@@ -137,8 +132,11 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
                 model_save_path=model_save_path,
                 artifacts_dir=artifacts_dir,
                 taste_ind=taste_ind,
-                loo_train_steps=params.get('loo_train_steps'),
-                loo_patience=params.get('loo_patience')
+                loo_train_steps = params.get('loo_train_steps'),
+                loo_patience=params.get('loo_patience'), 
+                scaler=prep['scaler'],
+                pca_obj=prep['pca_obj'], 
+                raw_labels_tensor=prep['raw_labels_tensor'],
             )
 
         else:
@@ -169,10 +167,10 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
             )
 
         info_criteria_all[taste_ind] = info_criteria
-
+        
         # --- LOO diagnostics (only in LOO mode) ---
         if validation_mode == 'loo':
-            plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, plots_dir)
+            plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, model_eval_dir)
 
         # --- Predict on full data ---
         outs, latent_outs = run_prediction(
@@ -190,6 +188,20 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         )
         pred_firing_list.append(pred_firing)
         binned_spikes_list.append(prep['binned_spikes'])
+        # now also running a quick and cheeky evaluate neurons to figure out if the model fits ok: 
+        evaluate_neurons(
+            net=net,
+            inputs_tensor=prep['inputs_tensor'],
+            labels_tensor=prep['labels_tensor'],
+            raw_labels_tensor=prep['raw_labels_tensor'],
+            scaler=prep['scaler'],
+            pca_obj=prep['pca_obj'],
+            binned_spikes=prep['binned_spikes'],
+            dataset_name=dataset_name,
+            taste_ind=taste_ind,
+            output_dir=model_eval_dir,
+            device=device,
+        )
 
         # --- Convolved firing rate (for comparison plots) ---
         conv_kern = np.ones(250) / 250
@@ -206,9 +218,9 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         # --- Per-taste plots ---
         plot_loss_curves(loss, cross_val_loss, dataset_name, taste_ind, plots_dir)
         plot_firing_overview(pred_firing, prep['binned_spikes'],
-                             dataset_name, taste_ind, plots_dir)
+                            dataset_name, taste_ind, plots_dir)
         plot_mean_firing(pred_firing, prep['binned_spikes'],
-                         dataset_name, taste_ind, plots_dir)
+                        dataset_name, taste_ind, plots_dir)
         plot_latent_factors(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_trial_latents(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_individual_neurons(
@@ -227,7 +239,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         dataset_name, plots_dir
     )
     plot_pred_vs_true_neurons(pred_firing_list, binned_spikes_list, plots_dir)
-    plot_aic_bic_summary(info_criteria_all, dataset_name, plots_dir)
+    plot_aic_bic_summary(info_criteria_all, dataset_name, model_eval_dir)
 
     # --- Save outputs ---
     save_to_hdf5(

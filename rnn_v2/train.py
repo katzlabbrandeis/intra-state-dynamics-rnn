@@ -1,39 +1,36 @@
 """
 Class to handle model training and prediction
-"""
+""" 
 
 ############################################################
 # Imports
 ############################################################
 
-from torch.nn import init
-from torch.nn import functional as F
-from scipy.stats import poisson, zscore
-from model import autoencoderRNN
-import torch.optim as optim
-import torch.nn as nn
-import torch
-import math
-import os
-import sys
 import time
-
 import numpy as np
 import pylab as plt
-from sklearn.decomposition import NMF, PCA
-from sklearn.metrics import explained_variance_score, r2_score
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from tqdm import tqdm, trange
-
+from sklearn.decomposition import PCA, NMF
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.metrics import explained_variance_score, r2_score
+import sys
+import os
 file_path = os.path.abspath(__file__)
 src_dir = os.path.dirname(file_path)
 sys.path.append(src_dir)
+from model import autoencoderRNN
 
 ############################################################
-# Define Model
+# Define Model 
 ############################################################
 # Define networks
-
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.nn import init
+from torch.nn import functional as F
+import math
+from scipy.stats import poisson, zscore
 
 class smooth_MSELoss(nn.Module):
     """
@@ -63,21 +60,18 @@ class smooth_MSELoss(nn.Module):
         loss = self.loss1(input, target) + self.mean_diffrence(input)
         return loss
 
-
 def MSELoss():
     return nn.MSELoss()
 
-# a few utils for better model comparisons
-
-
-def poisson_log_likelihood(predicted_rates, actual_counts):
+# a few utils for better model comparisons 
+def poisson_log_likelihood(predicted_rates, actual_counts): 
     """
     Poisson log-likelihood: sum( y*log(r) - r - log(y!) )
-
+    
     Args:
         predicted_rates: tensor, model output (must be > 0)
         actual_counts: tensor, observed spike counts
-
+    
     Returns:
         float, total log-likelihood
     """
@@ -86,49 +80,64 @@ def poisson_log_likelihood(predicted_rates, actual_counts):
     ll = torch.sum(y * torch.log(r) - r - torch.lgamma(y + 1))
     return ll.item()
 
+def gaussian_log_likelihood(predicted, actual):
+    """
+    Gaussian log-likelihood derived from MSE.
+
+    LL = -n/2 * ln(2*pi*sigma^2) - 1/(2*sigma^2) * sum((y - r)^2)
+
+    where sigma^2 = MSE (maximum likelihood estimate of variance).
+    Appropriate when the model is trained with MSE loss on z-scored data.
+
+    Args:
+        predicted: tensor, model output
+        actual: tensor, target values
+
+    Returns:
+        float, total log-likelihood
+    """
+    n = actual.numel()
+    residuals = actual - predicted
+    mse = torch.mean(residuals ** 2)
+    # MLE variance estimate
+    sigma2 = mse.item()
+    if sigma2 < 1e-12:
+        sigma2 = 1e-12
+    ll = -0.5 * n * (np.log(2 * np.pi * sigma2) + 1)
+    return ll
+
 
 def count_parameters(net):
     """Count trainable parameters in a network."""
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
-# now to compute AIC and BIC (Alkine & Baysiean information cirterion-- relevant to prediction error).
-# when comparing across models, lower is better.
-
-
+# now to compute AIC and BIC (Alkine & Baysiean information cirterion-- relevant to prediction error). 
+# when comparing across models, lower is better. 
 def compute_aic_bic(net, inputs, labels):
     """
-    Compute AIC and BIC using Poisson log-likelihood.
-
+    Compute AIC and BIC using Gaussian log-likelihood (consistent with MSE training).
+    
     Args:
         net: trained model
         inputs: (seq_len, batch, input_size)
-        labels: (seq_len, batch, output_size) — observed counts/rates
-
+        labels: (seq_len, batch, output_size) — z-scored data
+    
     Returns:
-        dict with aic, bic, log_likelihood, n_params, n_observations
-
-    Significance of the following values:
-    - n_Params:
-    - Observations:
-    - Log-Liklihood
-    - AIC:
-    - BIC:
-
+        dict with gaussian aic/bic/ll, n_params, n_observations
     """
     net.eval()
     with torch.no_grad():
         output, _ = net(inputs)
-        output = torch.clamp(output, min=1e-8)
-
-    ll = poisson_log_likelihood(output, labels)
+    
+    ll = gaussian_log_likelihood(output, labels)
     k = count_parameters(net)
     n = labels.numel()
-
+    
     aic = 2 * k - 2 * ll
     bic = k * np.log(n) - 2 * ll
-
+    
     net.train()
-
+    
     return dict(
         aic=aic,
         bic=bic,
@@ -138,21 +147,93 @@ def compute_aic_bic(net, inputs, labels):
     )
 
 
+def compute_poisson_aic_bic(net, inputs, raw_labels, scaler, pca_obj=None):
+    """
+    Compute AIC and BIC using Poisson log-likelihood on raw count space.
+
+    Inverse-transforms model predictions back to count space before
+    computing the Poisson LL against raw (non-z-scored, non-PCA'd) labels.
+
+    Args:
+        net: trained model
+        inputs: (seq_len, batch, input_size) — model inputs (z-scored + context)
+        raw_labels: (seq_len, batch, n_neurons) — raw binned spike counts
+        scaler: fitted StandardScaler
+        pca_obj: fitted PCA object or None
+
+    Returns:
+        dict with poisson aic/bic/ll, n_params, n_observations
+    """
+    net.eval()
+    with torch.no_grad():
+        output, _ = net(inputs)
+    
+    # Inverse transform predictions back to count space
+    pred_np = output.cpu().numpy()
+    orig_shape = pred_np.shape
+    pred_long = pred_np.reshape(-1, orig_shape[-1])
+
+    if pca_obj is not None:
+        try:
+            pred_long = pca_obj.inverse_transform(pred_long)
+        except Exception as e:
+            print(f"  [WARNING] Poisson LL: PCA inverse failed: {e}")
+            net.train()
+            return None
+
+    try:
+        pred_long = scaler.inverse_transform(pred_long)
+    except Exception as e:
+        print(f"  [WARNING] Poisson LL: scaler inverse failed: {e}")
+        net.train()
+        return None
+
+    # Clamp to non-negative (firing rates can't be negative)
+    pred_long = np.clip(pred_long, a_min=1e-8, a_max=None)
+    pred_tensor = torch.tensor(pred_long, dtype=torch.float32)
+
+    # raw_labels should already be (seq_len, batch, n_neurons) 
+    raw_flat = raw_labels.reshape(-1, raw_labels.shape[-1])
+
+    if pred_tensor.shape != raw_flat.shape:
+        print(f"  [WARNING] Poisson LL shape mismatch: "
+              f"pred {pred_tensor.shape} vs raw {raw_flat.shape}")
+        net.train()
+        return None
+
+    ll = poisson_log_likelihood(pred_tensor, raw_flat)
+    k = count_parameters(net)
+    n = raw_labels.numel()
+
+    aic = 2 * k - 2 * ll
+    bic = k * np.log(n) - 2 * ll
+
+    net.train()
+
+    return dict(
+        poisson_aic=aic,
+        poisson_bic=bic,
+        poisson_log_likelihood=ll,
+        n_params=k,
+        n_observations=n,
+    )
+
+
 def train_model(
-        net,
-        inputs,
-        labels,
+        net, 
+        inputs, 
+        labels, 
         output_size,
-        train_steps=1000,
-        lr=0.01,
-        delta_loss=0.01,
-        device=None,
-        criterion=MSELoss(),
-        test_inputs=None,
-        test_labels=None,
+        train_steps = 1000, 
+        lr=0.01, 
+        delta_loss = 0.01,
+        device = None,
+        criterion = MSELoss(), 
+        test_inputs = None,
+        test_labels = None,
         patience=10,  # New parameter for early stopping
-        quiet=False
-):
+        quiet = False
+        ):
     """Simple helper function to train the model.
 
     Args:
@@ -168,9 +249,9 @@ def train_model(
     optimizer = optim.Adam(net.parameters(), lr=lr)
 
     cross_val_bool = np.logical_and(
-        test_inputs is not None,
-        test_labels is not None
-    )
+            test_inputs is not None, 
+            test_labels is not None
+            )
 
     loss_history = []
     cross_val_loss = {}
@@ -193,7 +274,7 @@ def train_model(
 
         # Only compute cross_val_loss every 100 steps
         # because it's expensive
-        if cross_val_bool and (i % 100 == 99):
+        if cross_val_bool and (i % 100 == 99): 
             test_out, _ = net(test_inputs)
             test_out_flat = test_out.reshape(-1, output_size)
             test_labels_flat = test_labels.reshape(-1, output_size)
@@ -219,15 +300,15 @@ def train_model(
         # Compute the running loss every 100 steps
         current_loss = loss.item()
         loss_history.append(current_loss)
-        running_loss += current_loss
+        running_loss += current_loss 
         if i % 100 == 99:
             running_loss /= 100
             if not quiet:
                 print('Step {}, Loss {:0.4f}, {}, Time {:0.1f}s'.format(
                     i+1, running_loss, cross_str, time.time() - start_time))
             running_loss = 0
-    # now calculating AIC/BIC at the end of every training:
-    if cross_val_bool:
+    # now calculating AIC/BIC at the end of every training: 
+    if cross_val_bool: 
         eval_inputs = test_inputs
         eval_labels = test_labels
         eval_set = 'test'
@@ -238,11 +319,13 @@ def train_model(
 
     info_criteria = compute_aic_bic(net, eval_inputs, eval_labels)
     info_criteria['eval_set'] = eval_set
-    # print some info at the end of training just bc?
+    # print some info at the end of training just bc? 
     print(f"\n--- Information Criteria ({eval_set} set) ---")
     print(f"  Params:         {info_criteria['n_params']}")
     print(f"  Observations:   {info_criteria['n_observations']}")
-    print(f"  Log-Likelihood: {info_criteria['log_likelihood']:.2f}")
+    print(f"  Gauss. Log-Likelihood: {info_criteria['log_likelihood']:.2f}")
     print(f"  AIC:            {info_criteria['aic']:.2f}")
     print(f"  BIC:            {info_criteria['bic']:.2f}")
     return net, loss_history, cross_val_loss, info_criteria
+
+

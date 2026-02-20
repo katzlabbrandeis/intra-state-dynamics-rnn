@@ -13,7 +13,7 @@
         "train_test_split": 0.75,
         "use_pca": true,
         "retrain": true,
-        "time_lims": [1500, 7000],
-        "patience": 12000
+        "time_lims": [1500, 7000], 
+        "patience": 12000 
     }
 }
