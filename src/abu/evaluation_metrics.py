@@ -15,11 +15,17 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import polars as pl
 import sklearn.metrics as metrics
+from pathlib import Path
+from pprint import pprint as pp
 
 from core.config.roots_io import resolve_roots
 from core.utils.read_parquets import read_parquet_files_into_dict
 from core.pre_processing.RNNLatentprocessing import RNNLatentProcessor
 from core.io.standard_paths import ProjectPaths
+
+repo_root = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
+proj_roots = resolve_roots(Path(repo_root))
+proj_paths = ProjectPaths.from_repo_root(Path(repo_root))
 
 
 def load_rnn_data(
