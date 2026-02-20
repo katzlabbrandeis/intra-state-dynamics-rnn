@@ -17,7 +17,7 @@ from cloudpickle import load, dump  # noqa
 from sklearn.decomposition import PCA  # noqa
 
 import optuna  # noqa
-from optuna.visualization import plot_optimization_history, plot_param_importances, plot_contour  # noqa 
+from optuna.visualization import plot_optimization_history, plot_param_importances, plot_contour, plot_slice, plot_rank  # noqa
 
 # Check that blechRNN is on the Desktop, if so, add to path
 blechRNN_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'blechRNN')
@@ -150,17 +150,17 @@ inputs_pkl_path = os.path.join(artifacts_dir, f'{basename}_rnn_inputs.pkl')
 with open(inputs_pkl_path, 'wb') as f:
     dump(inputs_dict, f)
 
-############################################################
-# Run test training to make sure everything is working before running optuna optimization
-from importlib import reload
-reload(infer_rates)
-
-net, loss, cross_val_loss, best_cross_val_loss, outputs, latent, split_dict = infer_rates.train_rnn_all_tastes(
-    spike_data,
-    taste_durations,
-    params_dict,
-    test_trials=test_inds,
-)
+# ############################################################
+# # Run test training to make sure everything is working before running optuna optimization
+# from importlib import reload
+# reload(infer_rates)
+#
+# net, loss, cross_val_loss, best_cross_val_loss, outputs, latent, split_dict = infer_rates.train_rnn_all_tastes(
+#     spike_data,
+#     taste_durations,
+#     params_dict,
+#     test_trials=test_inds,
+# )
 
 ############################################################
 # Create optuna study and optimize hyperparameters
@@ -194,7 +194,7 @@ def objective(trial):
     print(f'  strictly_positive: {strictly_positive}')
 
     # Train the model and get the final loss
-    net, loss, cross_val_loss, best_cross_val_loss, outputs, latent = train_rnn_all_tastes(
+    net, loss, cross_val_loss, best_cross_val_loss, outputs, latent, split_dict = infer_rates.train_rnn_all_tastes(
         spike_data,
         taste_durations,
         params_dict,
@@ -206,15 +206,16 @@ def objective(trial):
     return final_loss
 
 study = optuna.create_study(direction='minimize',
-                            # storage="sqlite:///optuna_study.db",
-                            # study_name="rnn_hyperparameter_optimization",
+                            storage="sqlite:///optuna_study.db",
+                            study_name="hyper_test"
                             )
-study.optimize(objective, n_trials=20)
+study.optimize(objective, n_trials=50)
 
 # Save study as pkl
 study_pkl_path = os.path.join(artifacts_dir, f'{basename}_optuna_study.pkl')
-# with open(study_pkl_path, 'wb') as f:
-#     dump(study, f)
+with open(study_pkl_path, 'wb') as f:
+    dump(study, f)
+
 with open(study_pkl_path, 'rb') as f:
     study = load(f)
 
@@ -223,8 +224,10 @@ fig = plot_optimization_history(study)
 fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_optimization_history.html'))
 fig = plot_param_importances(study)
 fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_param_importances.html'))
-# fig.show()
-
+fig = plot_slice(study)
+fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_slice.html'))
+fig = plot_rank(study)
+fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_rank.html'))
 fig = plot_contour(study) 
 fig.write_html(os.path.join(plot_dir, f'{basename}_optuna_contour.html'))
 # fig.show()
