@@ -224,7 +224,7 @@ plt.close(fig)
 # Plot traces of warped firing rates for significant neurons
 
 # For each neuron, plot both warped and unwarped firing rates for all states for a single taste
-n_plots = 20
+n_plots = 50
 # Sort by highest mean firing rate and significance
 sorted_neurons = neuron_sig_results.sort_values(by=['n_significant_states', 'mean_rate_Hz'], ascending=False).head(n_plots) 
 # Add rank for each neuron for easier plotting
@@ -235,22 +235,20 @@ wanted_snippets = state_snippet_df.merge(
     on=['basename', 'neuron_ind']
 )
 
-
-
 grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'])
 
 this_plot_dir = os.path.join(plot_dir, 'rate_plots') 
 os.makedirs(this_plot_dir, exist_ok=True)
 
 # Plot layout: rows = (unwarped, warped), columns = states
-# bin_size = 50  # in ms
-kernel_width = 100  # in ms
+bin_size = 50  # in ms
+kernel_width = 250  # in ms
 for (basename, neuron_ind, taste_num), group in grouped_snippets:
     states = sorted(group.state_ind.unique())
     n_states = len(states)
     
     # Create subplot grid: 2 rows (unwarped, warped) x n_states columns
-    fig, axs = plt.subplots(2, n_states, figsize=(4*n_states, 6)) 
+    fig, axs = plt.subplots(2, n_states, figsize=(4*n_states, 6), sharey='col') 
     
     # Handle case where there's only one state
     if n_states == 1:
@@ -265,17 +263,17 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
 
         binned_spike_data_list = []
         for arr in spike_data_list:
-            # Bin the spike data
-            n_bins = int(np.ceil(len(arr) / bin_size))
-            binned = np.array([np.mean(arr[i*bin_size:(i+1)*bin_size]) for i in range(n_bins)])
-            binned_spike_data_list.append(binned)
-            # # Smooth with boxcar kernel
-            # if len(arr) < kernel_width:
-            #     smoothed = arr
-            # else:
-            #     kernel = np.ones(kernel_width) / kernel_width
-            #     smoothed = np.convolve(arr, kernel, mode='same')
-            # binned_spike_data_list.append(smoothed)
+            # # Bin the spike data
+            # n_bins = int(np.ceil(len(arr) / bin_size))
+            # binned = np.array([np.mean(arr[i*bin_size:(i+1)*bin_size]) for i in range(n_bins)])
+            # binned_spike_data_list.append(binned)
+            # Smooth with boxcar kernel
+            if len(arr) < kernel_width:
+                smoothed = arr
+            else:
+                kernel = np.ones(kernel_width) / kernel_width
+                smoothed = np.convolve(arr, kernel, mode='valid')
+            binned_spike_data_list.append(smoothed)
 
         # Smooth firing rates with Savitzky-Golay filter
         smoothed_spike_data_list = []
@@ -320,7 +318,13 @@ for (basename, neuron_ind, taste_num), group in grouped_snippets:
         if col_idx == 0:
             axs[1, col_idx].set_ylabel('Firing Rate (spikes/ms)')
             axs[1, col_idx].legend()
-    
+
+        # Set y_lim to a robust range across both plots
+        all_rates = np.concatenate(smoothed_spike_data_list + [mean_warped_rate])
+        perc_lims = [5, 95]
+        y_min, y_max = np.percentile(all_rates, perc_lims)
+        axs[0, col_idx].set_ylim(y_min, y_max)
+
     # Add overall title
     suptitle_str = f'{basename} Neuron {neuron_ind} Taste {taste_num}\nTop: Unwarped, Bottom: Warped'
     # Also add mean firing rate info and significance info
