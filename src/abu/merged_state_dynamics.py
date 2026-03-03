@@ -206,22 +206,30 @@ full_state_df['cut_duration'] = pd.cut(full_state_df['valid_state_durations'], b
 # Group by taste, n_states, and cut bins
 grouped = full_state_df.groupby(['taste_name', 'n_states', 'cut_onset', 'cut_duration'])
 
+this_plot_dir = os.path.join(plot_dir, 'pseudo_population_dynamics')
+os.makedirs(this_plot_dir, exist_ok=True)
+
 for group_ind, this_group in grouped:
     taste_name, n_states, cut_onset, cut_duration = group_ind
-    if len(this_group) > 5:
-        break
+    if len(this_group) < 5:
+        continue
 
-    fig, ax = plt.subplots(len(this_group), 1, sharex=True) 
-    for this_ax, (trial_ind, this_trial) in zip(ax,this_group.iterrows()):
-        this_ax.imshow(this_trial['spike_trains'], aspect='auto', cmap='jet')
-        for this_change in this_trial['valid_changes']:
-            this_ax.axvline(this_change, color='yellow', linestyle='--')
-    fig.suptitle(f'{taste_name} - {n_states} states - Onset: {cut_onset} - Duration: {cut_duration}')
-    plt.tight_layout()
-    plt.show()
+    # fig, ax = plt.subplots(len(this_group), 1, sharex=True) 
+    # for this_ax, (trial_ind, this_trial) in zip(ax,this_group.iterrows()):
+    #     this_ax.imshow(this_trial['spike_trains'], aspect='auto', cmap='jet')
+    #     for this_change in this_trial['valid_changes']:
+    #         this_ax.axvline(this_change, color='yellow', linestyle='--')
+    # fig.suptitle(f'{taste_name} - {n_states} states - Onset: {cut_onset} - Duration: {cut_duration}')
+    # plt.tight_layout()
+    # plt.show()
+    # unit_ind_vec = np.concatenate([np.ones(unit_count) * ind for ind, unit_count in enumerate(unit_counts)])
+    unit_basename_vec = np.concatenate([np.repeat(this_group.basename.values[ind], this_group.n_units.values[ind]) for ind in range(len(this_group))])
+    # Map basenames to integers for color coding
+    unique_basenames = np.unique(unit_basename_vec)
+    basename_to_int = {basename: idx for idx, basename in enumerate(unique_basenames)}
+    unit_ind_vec = np.concatenate([np.ones(unit_count) * basename_to_int[this_group.basename.values[ind]] for ind, unit_count in enumerate(this_group.n_units.values)])
 
     unit_counts = this_group.n_units.values 
-    unit_ind_vec = np.concatenate([np.ones(unit_count) * ind for ind, unit_count in enumerate(unit_counts)])
     all_spikes = np.concatenate(this_group['spike_trains'].values, axis=0)
     onset = int(this_group.valid_state_onsets.values[0])
     duration = int(this_group.valid_state_durations.values[0])
@@ -236,7 +244,7 @@ for group_ind, this_group in grouped:
 
     # Filter pca_spikes using Savitzky-Golay filter for better visualization
     filter_window = 3
-    filter_polyorder = 2
+    filter_polyorder = 1
     filt_pca_spikes = signal.savgol_filter(pca_spikes, filter_window, filter_polyorder, axis=1)
 
     cmap = plt.get_cmap('tab10')
@@ -248,14 +256,15 @@ for group_ind, this_group in grouped:
     ax[2].imshow(loadings, aspect='auto', cmap='viridis', interpolation='nearest')
     ax[3].bar(np.arange(loadings.shape[1]), pca_obj.explained_variance_ratio_)
     ax[4].imshow(unit_ind_vec[:,None], aspect='auto', cmap='tab20', interpolation='nearest')
+    for this_count in np.cumsum(unit_counts)[:-1]:
+        ax[4].axhline(this_count, color='black', linestyle='--')
     ax[0].set_title('Z-scored Spikes')
     ax[1].set_title('PCA Projection')
     ax[2].set_title('PCA Loadings')
     ax[3].set_title('Explained Variance Ratio')
     ax[4].set_title('Unit Grouping')
     plt.tight_layout()
-    plt.show()
-
-
-    
+    fig.savefig(os.path.join(this_plot_dir, f'{taste_name}_{n_states}states_onset{cut_onset}_duration{cut_duration}_dynamics.png'))
+    plt.close(fig)
+    # plt.show()
 
