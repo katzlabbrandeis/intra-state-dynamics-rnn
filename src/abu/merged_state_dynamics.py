@@ -16,6 +16,8 @@ import pingouin as pg
 import cloudpickle
 from cloudpickle import load, dump
 import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from scipy import signal
 
 import sys
 import os
@@ -103,10 +105,13 @@ for row_ind, this_row in tqdm(best_models_df.iterrows()):
                 basename=basename,
                 taste_name=taste_name,
                 n_states=n_states,
+                n_units=valid_spike_trains.shape[1],
                 trial_id=valid_trial_ids,
                 valid_state_onsets=list(valid_state_onsets),
                 valid_state_durations=list(valid_state_durations),
-                change_ids=list(change_ids)
+                change_ids=list(change_ids),
+                spike_trains=list(valid_spike_trains),
+                valid_changes=list(valid_changepoints),
                 )
             )
     # Explode
@@ -191,3 +196,66 @@ fig.savefig(os.path.join(plot_dir, 'state_durations_by_onset_time_manual.png'))
 plt.close(fig)
 
 ##############################
+# Recreate to remove jitter
+full_state_df = pd.concat(state_df_list, ignore_index=True)
+# Cut by state onsets and duration
+tolerance = 1
+full_state_df['cut_onset'] = pd.cut(full_state_df['valid_state_onsets'], bins=np.arange(full_state_df['valid_state_onsets'].min(), full_state_df['valid_state_onsets'].max() + tolerance, tolerance))
+full_state_df['cut_duration'] = pd.cut(full_state_df['valid_state_durations'], bins=np.arange(full_state_df['valid_state_durations'].min(), full_state_df['valid_state_durations'].max() + tolerance, tolerance))
+
+# Group by taste, n_states, and cut bins
+grouped = full_state_df.groupby(['taste_name', 'n_states', 'cut_onset', 'cut_duration'])
+
+for group_ind, this_group in grouped:
+    taste_name, n_states, cut_onset, cut_duration = group_ind
+    if len(this_group) > 5:
+        break
+
+    fig, ax = plt.subplots(len(this_group), 1, sharex=True) 
+    for this_ax, (trial_ind, this_trial) in zip(ax,this_group.iterrows()):
+        this_ax.imshow(this_trial['spike_trains'], aspect='auto', cmap='jet')
+        for this_change in this_trial['valid_changes']:
+            this_ax.axvline(this_change, color='yellow', linestyle='--')
+    fig.suptitle(f'{taste_name} - {n_states} states - Onset: {cut_onset} - Duration: {cut_duration}')
+    plt.tight_layout()
+    plt.show()
+
+    unit_counts = this_group.n_units.values 
+    unit_ind_vec = np.concatenate([np.ones(unit_count) * ind for ind, unit_count in enumerate(unit_counts)])
+    all_spikes = np.concatenate(this_group['spike_trains'].values, axis=0)
+    onset = int(this_group.valid_state_onsets.values[0])
+    duration = int(this_group.valid_state_durations.values[0])
+    state_spikes = all_spikes[:, onset:onset+duration] 
+    zscore_spikes = stats.zscore(state_spikes, axis=1)
+    # Drop any units with NaNs (e.g. zero variance)
+    valid_units = ~np.isnan(zscore_spikes).any(axis=1)
+    zscore_spikes = zscore_spikes[valid_units]
+    pca_obj = PCA(3).fit(zscore_spikes.T)
+    pca_spikes = pca_obj.transform(zscore_spikes.T).T
+    loadings = pca_obj.components_.T
+
+    # Filter pca_spikes using Savitzky-Golay filter for better visualization
+    filter_window = 3
+    filter_polyorder = 2
+    filt_pca_spikes = signal.savgol_filter(pca_spikes, filter_window, filter_polyorder, axis=1)
+
+    cmap = plt.get_cmap('tab10')
+    fig,ax = plt.subplots(5,1, figsize=(4,15))
+    ax[0].imshow(zscore_spikes, aspect='auto', cmap='viridis', interpolation='nearest')
+    for pca_ind in range(pca_spikes.shape[0]):
+        ax[1].plot(filt_pca_spikes[pca_ind], c=cmap(pca_ind), linewidth=2)
+        ax[1].plot(pca_spikes.T, alpha=0.1, linestyle='--', c=cmap(pca_ind))
+    ax[2].imshow(loadings, aspect='auto', cmap='viridis', interpolation='nearest')
+    ax[3].bar(np.arange(loadings.shape[1]), pca_obj.explained_variance_ratio_)
+    ax[4].imshow(unit_ind_vec[:,None], aspect='auto', cmap='tab20', interpolation='nearest')
+    ax[0].set_title('Z-scored Spikes')
+    ax[1].set_title('PCA Projection')
+    ax[2].set_title('PCA Loadings')
+    ax[3].set_title('Explained Variance Ratio')
+    ax[4].set_title('Unit Grouping')
+    plt.tight_layout()
+    plt.show()
+
+
+    
+
