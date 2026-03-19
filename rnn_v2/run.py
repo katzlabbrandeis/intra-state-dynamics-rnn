@@ -1,5 +1,5 @@
 """
-Part of a concerted effort to clean this script up in general to make it that much 
+Part of a concerted effort to clean this script up in general to make it that much
 easier to do model comparisons, etc
 
 run_rnn.py — Main orchestration script.
@@ -12,42 +12,51 @@ Loops over H5 datasets and tastes, calling modular functions for:
     - Visualization
     - Saving outputs
 
-NOTE: On the params json: 
+NOTE: On the params json:
 Config parameter "validation_mode":
     - "split" (default): standard train/test split
     - "loo": leave-one-out CV for AIC/BIC, then retrain on all trials
 
 """
+import json
+from ephys_data import ephys_data
 import os
+
 import numpy as np
 import torch
-
 from config_loader import load_config
-from preprocessing import preprocess_taste, train_test_split_trials
-from run_training import train_or_load, run_prediction, loo_then_train
-from postprocessing import reconstruct_firing
-from visualizations import (
-    plot_inputs, plot_loss_curves, plot_firing_overview,
-    plot_mean_firing, plot_latent_factors, plot_trial_latents,
-    plot_individual_neurons, plot_mean_neurons_across_tastes,
-    plot_pred_vs_true_neurons, plot_aic_bic_summary, plot_loo_diagnostics,
-)
-from save_outputs import save_to_hdf5, save_latents_parquet, save_firing_parquet
 from neuron_eval import evaluate_neurons
-
+from postprocessing import reconstruct_firing
+from preprocessing import preprocess_taste, train_test_split_trials
+from run_training import loo_then_train, run_prediction, train_or_load
+from save_outputs import save_firing_parquet, save_latents_parquet, save_to_hdf5
 from train import MSELoss, smooth_MSELoss
+from visualizations import (
+    plot_aic_bic_summary,
+    plot_firing_overview,
+    plot_individual_neurons,
+    plot_inputs,
+    plot_latent_factors,
+    plot_loo_diagnostics,
+    plot_loss_curves,
+    plot_mean_firing,
+    plot_mean_neurons_across_tastes,
+    plot_pred_vs_true_neurons,
+    plot_trial_latents,
+)
+
 
 def get_criterion(loss_name):
     if loss_name == 'smooth':
         return smooth_MSELoss(alpha=0.05)
     return MSELoss()
 
-import json
-# load in the configs: 
+
+# load in the configs:
 config_path = '/home/vincent/Senior thesis work/blechRNN-master/config/blechrnn_config.json'
 # ----------------------------------------------------------------
 # Optuna override (set to True to use optimized params from Optuna)
-# NOTE: you really need to know which ones you want to use. Also, be aware that this applies to ALL datasets (hehe). 
+# NOTE: you really need to know which ones you want to use. Also, be aware that this applies to ALL datasets (hehe).
 # ----------------------------------------------------------------
 USE_OPTUNA_PARAMS = False
 OPTUNA_PARAMS_PATH = '/home/vincent/Senior thesis work/blechRNN-master/jan2026validationR1_testing/optuna_optimization/AM26_4Tastes_200826_101430_repacked/optimized_params_used.json'
@@ -71,18 +80,18 @@ if USE_OPTUNA_PARAMS:
             params[key] = optuna_params[key]
             print(f"         {key}: {old_val} -> {params[key]}")
     criterion = get_criterion(params['loss_name'])
-    print(f"  [INFO] Final params: { {k: params[k] for k in ['hidden_size', 'rnn_layers', 'dropout', 'lr', 'loss_name']} }")
+    print(
+        f"  [INFO] Final params: { {k: params[k] for k in ['hidden_size', 'rnn_layers', 'dropout', 'lr', 'loss_name']} }")
 
-from ephys_data import ephys_data
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-validation_mode = params.get('validation_mode', 'split') # note 'split' is the default if nothing is specified. 
+validation_mode = params.get('validation_mode', 'split')  # note 'split' is the default if nothing is specified.
 print(f"Validation mode: {validation_mode}")
 # ----------------------------------------------------------------
 # Loop over datasets
 # ----------------------------------------------------------------
 
-#if not USE_OPTUNA_PARAMS:
+# if not USE_OPTUNA_PARAMS:
 #    # original params
 #    lr=0.001
 #    rnn_layers=2
@@ -107,7 +116,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
     output_path = os.path.join(paths['output_base_dir'], dataset_name)
     plots_dir = os.path.join(output_path, 'plots')
     artifacts_dir = os.path.join(output_path, 'artifacts')
-    model_eval_dir = os.path.join(output_path, 'model_eval') # specicifically for the LOO stuff
+    model_eval_dir = os.path.join(output_path, 'model_eval')  # specicifically for the LOO stuff
     os.makedirs(model_eval_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
     os.makedirs(artifacts_dir, exist_ok=True)
@@ -175,10 +184,10 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
                 model_save_path=model_save_path,
                 artifacts_dir=artifacts_dir,
                 taste_ind=taste_ind,
-                loo_train_steps = params.get('loo_train_steps'),
-                loo_patience=params.get('loo_patience'), 
+                loo_train_steps=params.get('loo_train_steps'),
+                loo_patience=params.get('loo_patience'),
                 scaler=prep['scaler'],
-                pca_obj=prep['pca_obj'], 
+                pca_obj=prep['pca_obj'],
                 raw_labels_tensor=prep['raw_labels_tensor'],
             )
 
@@ -210,7 +219,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
             )
 
         info_criteria_all[taste_ind] = info_criteria
-        
+
         # --- LOO diagnostics (only in LOO mode) ---
         if validation_mode == 'loo':
             plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, model_eval_dir)
@@ -231,7 +240,7 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         )
         pred_firing_list.append(pred_firing)
         binned_spikes_list.append(prep['binned_spikes'])
-        # now also running a quick and cheeky evaluate neurons to figure out if the model fits ok: 
+        # now also running a quick and cheeky evaluate neurons to figure out if the model fits ok:
         evaluate_neurons(
             net=net,
             inputs_tensor=prep['inputs_tensor'],
@@ -261,9 +270,9 @@ for subdir in sorted(os.listdir(paths['h5_dir'])):
         # --- Per-taste plots ---
         plot_loss_curves(loss, cross_val_loss, dataset_name, taste_ind, plots_dir)
         plot_firing_overview(pred_firing, prep['binned_spikes'],
-                            dataset_name, taste_ind, plots_dir)
+                             dataset_name, taste_ind, plots_dir)
         plot_mean_firing(pred_firing, prep['binned_spikes'],
-                        dataset_name, taste_ind, plots_dir)
+                         dataset_name, taste_ind, plots_dir)
         plot_latent_factors(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_trial_latents(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_individual_neurons(

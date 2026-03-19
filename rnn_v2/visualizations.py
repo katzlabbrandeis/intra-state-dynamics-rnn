@@ -6,15 +6,16 @@ saving, and closing.
 """
 
 import os
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.stats import zscore
 
-
 # ----------------------------------------------------------------
-# Helper: import visualize module (vz) - note that this is Abu's personal (?) libary, sooooo 
+# Helper: import visualize module (vz) - note that this is Abu's personal (?) libary, sooooo
 # ----------------------------------------------------------------
 _vz = None
+
 
 def _get_vz():
     global _vz
@@ -155,9 +156,9 @@ def plot_trial_latents(latent_outs, dataset_name, taste_ind, plots_dir):
 # Individual neuron plots (raster + conv + RNN predicted)
 # ----------------------------------------------------------------
 def plot_individual_neurons(
-        taste_spikes, binned_spikes, pred_firing, conv_rate, conv_x,
-        bin_size, stim_time_val, dataset_name, taste_ind, plots_dir
-    ):
+    taste_spikes, binned_spikes, pred_firing, conv_rate, conv_x,
+    bin_size, stim_time_val, dataset_name, taste_ind, plots_dir
+):
     """Per-neuron raster, convolved rate, and RNN prediction."""
     vz = _get_vz()
     ind_plot_dir = os.path.join(plots_dir, 'individual_neurons')
@@ -181,10 +182,10 @@ def plot_individual_neurons(
 
 
 def plot_mean_neurons_across_tastes(
-        spike_array, pred_firing_list, binned_spikes_list,
-        conv_rate_list, conv_x_list, bin_size, stim_time_val,
-        time_lims, dataset_name, plots_dir
-    ):
+    spike_array, pred_firing_list, binned_spikes_list,
+    conv_rate_list, conv_x_list, bin_size, stim_time_val,
+    time_lims, dataset_name, plots_dir
+):
     """
     Cross-taste mean neuron plots: raster, convolved, and predicted.
     Called ONCE after all tastes are processed.
@@ -332,7 +333,6 @@ def plot_aic_bic_summary(info_criteria_all, dataset_name, plots_dir):
         bbox_inches='tight', dpi=250
     )
     plt.close(fig)
-
 
 
 # ----------------------------------------------------------------
@@ -504,17 +504,16 @@ def plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, plots_dir):
     ax.text(0.05, 0.95, '\n'.join(stats_lines), transform=ax.transAxes,
             fontsize=9, family='monospace', va='top')
 
-
     # ==================================================================
     # Panels 6-9: Poisson diagnostics (only if available)
     # ==================================================================
     if has_poisson:
-        per_p_ll    = np.array(per_poisson_ll)
-        valid_mask  = ~np.isnan(per_p_ll)
+        per_p_ll = np.array(per_poisson_ll)
+        valid_mask = ~np.isnan(per_p_ll)
         per_p_valid = per_p_ll[valid_mask]
         p_mean = np.nanmean(per_p_ll)
-        p_std  = np.nanstd(per_p_ll)
-        p_sem  = p_std / np.sqrt(len(per_p_valid))
+        p_std = np.nanstd(per_p_ll)
+        p_sem = p_std / np.sqrt(len(per_p_valid))
 
         # --- [2,0] Per-trial Poisson LL ---
         ax = axes[2, 0]

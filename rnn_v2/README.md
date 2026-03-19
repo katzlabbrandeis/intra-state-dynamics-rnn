@@ -2,11 +2,11 @@
 
 Autoencoder-RNN for predicting neural firing rates from binned spike trains. Encoder compresses population activity to a low-dimensional latent space, an RNN learns temporal dynamics in that space, and a decoder projects back to firing rate predictions.
 
-## NOTE: 
-Still working on making this whole thing tick. At the moment, it's mostly working but there are still some fit issues that have to be ironed out. 
-Due to the RNN being a stochastic measure (after all), there is unfortunately a real limit on what I can reasonably achieve. 
+## NOTE:
+Still working on making this whole thing tick. At the moment, it's mostly working but there are still some fit issues that have to be ironed out.
+Due to the RNN being a stochastic measure (after all), there is unfortunately a real limit on what I can reasonably achieve.
 
-To abu: Working on pushing some of the validation stuff I've got here to DVC... this is going on github for now though. Stuff to do! 
+To abu: Working on pushing some of the validation stuff I've got here to DVC... this is going on github for now though. Stuff to do!
 
 ## Pipeline overview
 

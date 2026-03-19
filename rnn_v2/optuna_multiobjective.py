@@ -12,15 +12,15 @@ Drop these into optuna_core.py to replace the single-objective versions,
 or import them alongside.
 """
 
+import json
 import os
 import time
-import numpy as np
-import torch
-import json
-import matplotlib.pyplot as plt
 from datetime import datetime
 
+import matplotlib.pyplot as plt
+import numpy as np
 import optuna
+import torch
 from run_training import kfold_evaluate
 
 
@@ -38,11 +38,11 @@ def get_criterion(loss_name):
 def _extract_metrics(info_criteria, corr_metric='poisson'):
     """
     Extract normalized AICr and loss-LL correlation from info_criteria.
- 
+
     Args:
         info_criteria: dict from kfold_evaluate
         corr_metric: 'poisson' or 'gaussian'
- 
+
     Returns:
         aicr_norm: float, AICr per observation (lower is better)
         loss_ll_corr: float, correlation between fold loss and fold LL
@@ -50,15 +50,15 @@ def _extract_metrics(info_criteria, corr_metric='poisson'):
     aicr = info_criteria.get('poisson_aicr', float('nan'))
     if np.isnan(aicr):
         aicr = info_criteria.get('poisson_aic', float('nan'))
- 
+
     n_obs = info_criteria.get('n_observations', 1)
     aicr_norm = aicr / n_obs if not np.isnan(aicr) else float('inf')
- 
+
     if corr_metric == 'gaussian':
         loss_ll_corr = info_criteria.get('loss_gaussian_corr', float('nan'))
     else:
         loss_ll_corr = info_criteria.get('loss_poisson_corr', float('nan'))
- 
+
     return aicr_norm, loss_ll_corr
 
 
@@ -297,7 +297,6 @@ def create_multidataset_multiobjective(all_dataset_preps, device, artifacts_dir,
               f"dropout={params['dropout']:.2f}, lr={params['lr']:.4f} | "
               f"Overall AICr/obs={overall_aicr:.6f}, Overall r({corr_label})={overall_corr:.3f} | "
               f"{elapsed:.1f}s")
-
 
         neg_corr = -overall_corr if not np.isnan(overall_corr) else float('inf')
         return overall_aicr, neg_corr

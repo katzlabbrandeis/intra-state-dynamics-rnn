@@ -3,29 +3,35 @@ Core functions for Optuna hyperparameter optimization.
 Imported by optuna_sweep.py — do not run directly.
 """
 
-import os
 import json
+import os
 import time
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
 from datetime import datetime
-import optuna
 
-from run_training import loo_then_train, run_prediction, kfold_evaluate
+import matplotlib.pyplot as plt
+import numpy as np
+import optuna
+import torch
+from ephys_data import ephys_data
+from neuron_eval import evaluate_neurons
 from postprocessing import reconstruct_firing
+from preprocessing import preprocess_taste
+from run_training import kfold_evaluate, loo_then_train, run_prediction
+from save_outputs import save_firing_parquet, save_latents_parquet, save_to_hdf5
 from train import MSELoss, smooth_MSELoss
 from visualizations import (
-    plot_inputs, plot_loss_curves, plot_firing_overview,
-    plot_mean_firing, plot_latent_factors, plot_trial_latents,
-    plot_individual_neurons, plot_mean_neurons_across_tastes,
-    plot_pred_vs_true_neurons, plot_aic_bic_summary,
+    plot_aic_bic_summary,
+    plot_firing_overview,
+    plot_individual_neurons,
+    plot_inputs,
+    plot_latent_factors,
     plot_loo_diagnostics,
+    plot_loss_curves,
+    plot_mean_firing,
+    plot_mean_neurons_across_tastes,
+    plot_pred_vs_true_neurons,
+    plot_trial_latents,
 )
-from save_outputs import save_to_hdf5, save_latents_parquet, save_firing_parquet
-from neuron_eval import evaluate_neurons
-from preprocessing import preprocess_taste
-from ephys_data import ephys_data
 
 
 def get_criterion(loss_name):
@@ -44,13 +50,13 @@ def create_objective(prep, device, taste_ind, artifacts_dir,
     def objective(trial):
         # Import here to avoid circular — define_search_space lives in optuna_sweep.py
         from optuna_sweep import define_search_space
-        kfold = True # internal flag that makes it so that the optuna objective is informed by 
+        kfold = True  # internal flag that makes it so that the optuna objective is informed by
         # the kfold results
         params = define_search_space(trial)
         criterion = get_criterion(params['loss_name'])
         trial_start = time.time()
         try:
-            if kfold: 
+            if kfold:
                 info_criteria = kfold_evaluate(
                     inputs_tensor=prep['inputs_tensor'],
                     labels_tensor=prep['labels_tensor'],
@@ -108,7 +114,7 @@ def create_objective(prep, device, taste_ind, artifacts_dir,
             poisson_aic = info_criteria.get('poisson_aic', float('nan'))
             if np.isnan(poisson_aic):
                 print(f"  Trial {trial.number}: Poisson AIC is nan, "
-                    f"falling back to Gaussian")
+                      f"falling back to Gaussian")
                 poisson_aic = info_criteria.get('aic', float('inf'))
 
         elapsed = time.time() - trial_start
@@ -490,9 +496,9 @@ def run_optimized_pipeline(best_params, paths, params,
 
         plot_loss_curves(loss, cross_val_loss, dataset_name, taste_ind, plots_dir)
         plot_firing_overview(pred_firing, prep['binned_spikes'],
-                            dataset_name, taste_ind, plots_dir)
+                             dataset_name, taste_ind, plots_dir)
         plot_mean_firing(pred_firing, prep['binned_spikes'],
-                        dataset_name, taste_ind, plots_dir)
+                         dataset_name, taste_ind, plots_dir)
         plot_latent_factors(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_trial_latents(latent_outs, dataset_name, taste_ind, plots_dir)
         plot_individual_neurons(
@@ -531,7 +537,7 @@ def run_optimized_pipeline(best_params, paths, params,
 
 
 # but the thing is, what is good for one taste may not be ideal for another. Soooooo... we do a multi-taste sweep
-# and we do that sweep somewhat intelligently so that things don't take too long. 
+# and we do that sweep somewhat intelligently so that things don't take too long.
 
 def create_multitaste_objective(all_preps, device, artifacts_dir,
                                 loo_train_steps, loo_patience):
@@ -539,8 +545,8 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
     Objective that evaluates across all tastes.
     Returns mean Poisson AIC. Prunes early if a taste is catastrophically bad.
 
-    We're gonna implement kfold here to make the optuna sweep go faster. 
-    An internal flag is to be used to switch this on and off. 
+    We're gonna implement kfold here to make the optuna sweep go faster.
+    An internal flag is to be used to switch this on and off.
     """
     def objective(trial):
         from optuna_sweep import define_search_space
@@ -551,20 +557,19 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
 
         taste_aics = []
 
-
-        # k-fold eval makes this all a bit quicker, at the cost of introducing some noise. 
+        # k-fold eval makes this all a bit quicker, at the cost of introducing some noise.
         kfold = True
 
-        # to avoid data saving conflicts, we may consider saving data for each optuna trial: 
+        # to avoid data saving conflicts, we may consider saving data for each optuna trial:
         trial_root = os.path.join(artifacts_dir, f"trial_{trial.number:05d}")
         os.makedirs(trial_root, exist_ok=True)
         # iterating in a fixed order for maximum comparability here:
         for taste_ind in sorted(all_preps):
             prep = all_preps[taste_ind]
-            # and also for taste: 
+            # and also for taste:
             taste_dir = os.path.join(trial_root, f"taste_{taste_ind}")
             os.makedirs(taste_dir, exist_ok=True)
-        #for taste_ind, prep in all_preps.items():
+        # for taste_ind, prep in all_preps.items():
             try:
                 if kfold:
 
@@ -605,7 +610,7 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
                         dropout=params['dropout'],
                         retrain=True,
                         model_save_path=None,
-                        artifacts_dir=artifacts_dir, # change to taste_dir if we want to avoid conflicts too much....
+                        artifacts_dir=artifacts_dir,  # change to taste_dir if we want to avoid conflicts too much....
                         taste_ind=taste_ind,
                         verbose=False,
                         loo_train_steps=loo_train_steps,
@@ -622,11 +627,11 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
             poisson_aic = info_criteria.get('poisson_aicr', float('nan'))
             if np.isnan(poisson_aic):
                 print(f"  Trial {trial.number}: Poisson AICr is nan, "
-                    f"falling back to poisson AIC")
+                      f"falling back to poisson AIC")
                 poisson_aic = info_criteria.get('poisson_aic', float('nan'))
                 if np.isnan(poisson_aic):
                     print(f"  Trial {trial.number}: Poisson AIC is nan, "
-                        f"falling back to Gaussian")
+                          f"falling back to Gaussian")
                     poisson_aic = info_criteria.get('aic', float('inf'))
             taste_aics.append(poisson_aic)
             # Report intermediate value for pruning
@@ -646,13 +651,12 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
         trial.set_user_attr('std_aic', float(np.std(taste_aics)))
         trial.set_user_attr('time_s', elapsed)
 
-
         #    aic = info_criteria.get('poisson_aic', float('nan'))
         #    if np.isnan(aic):
         #        aic = info_criteria.get('aic', float('inf'))
         #    taste_aics.append(aic)
 
-            # Report intermediate value for pruning
+        # Report intermediate value for pruning
         #    running_mean = np.mean(taste_aics)
         #    trial.report(running_mean, step=taste_ind)
         #    if trial.should_prune():
@@ -662,16 +666,16 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
 
         #    print(f"    Taste {taste_ind}: Poisson AIC={aic:.2f}")
 
-        #mean_aic = np.mean(taste_aics)
-        #elapsed = time.time() - trial_start
+        # mean_aic = np.mean(taste_aics)
+        # elapsed = time.time() - trial_start
 
-        #trial.set_user_attr('per_taste_aic', taste_aics)
-        #trial.set_user_attr('mean_aic', mean_aic)
-        #trial.set_user_attr('std_aic', float(np.std(taste_aics)))
-        #trial.set_user_attr('time_s', elapsed)
+        # trial.set_user_attr('per_taste_aic', taste_aics)
+        # trial.set_user_attr('mean_aic', mean_aic)
+        # trial.set_user_attr('std_aic', float(np.std(taste_aics)))
+        # trial.set_user_attr('time_s', elapsed)
 
-        #trial.set_user_attr('raw_mse', float(np.mean((pred_long - raw_long)**2)))
-        #trial.set_user_attr('raw_corr', float(np.corrcoef(pred_long.flatten(), 
+        # trial.set_user_attr('raw_mse', float(np.mean((pred_long - raw_long)**2)))
+        # trial.set_user_attr('raw_corr', float(np.corrcoef(pred_long.flatten(),
         #                                             raw_long.flatten())[0,1]))
 
         print(f"  Trial {trial.number}: "
@@ -687,10 +691,10 @@ def create_multitaste_objective(all_preps, device, artifacts_dir,
 
 
 def create_multidataset_objective(all_dataset_preps, device, artifacts_dir,
-                                   loo_train_steps, loo_patience):
+                                  loo_train_steps, loo_patience):
     """
     Objective that evaluates across multiple datasets and tastes.
-    
+
     all_dataset_preps: dict of {dataset_name: {taste_ind: prep_dict}}
     Returns mean Poisson AICr across all datasets and tastes.
     """
@@ -729,14 +733,14 @@ def create_multidataset_objective(all_dataset_preps, device, artifacts_dir,
                     verbose=False,
                     taste_ind=taste_ind,
                 )
-                # NOTE: have to account for the fact that different datasets are wildly differing 
-                # in their size. As such, we need a way to ensure that none are disproportionately 
+                # NOTE: have to account for the fact that different datasets are wildly differing
+                # in their size. As such, we need a way to ensure that none are disproportionately
                 # pushing the results one way or another.
                 aic = info_criteria.get('poisson_aicr', float('nan'))
                 if np.isnan(aic):
                     aic = info_criteria.get('poisson_aic', float('inf'))
                 n_obs = info_criteria.get('n_observations', 1)
-                # we normalize here to number of params so we can control things. 
+                # we normalize here to number of params so we can control things.
                 taste_aics.append(aic / n_obs)
 
             ds_mean = np.mean(taste_aics)
