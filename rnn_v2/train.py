@@ -219,6 +219,22 @@ def compute_poisson_aic_bic(net, inputs, raw_labels, scaler, pca_obj=None):
     )
 
 
+### NOTE: NEW
+# so AIC still punishes extra model complexity (punishment of 2k), which may be an issue. 
+# Aicr deals with this, and corrects for out of sample (out-of-x) stuff. 
+# see: https://www.sciencedirect.com/science/article/pii/S0167715221000262
+
+def compute_aicr_penalty(n_obs, n_params):
+    """AICr penalty term (DelSole & Tippett 2021)."""
+    N, M = n_obs, n_params
+    if N <= M + 2 or N <= M + 1:
+        return float('nan')
+    return (N * (N + 1) / (N - M - 2)) * (1 + (M - 1) / (N - M - 1))
+
+# Standard:  aic  = 2 * n_params - 2 * total_ll
+# Corrected: aicr = compute_aicr_penalty(n_obs, n_params) - 2 * total_ll
+
+
 def train_model(
         net, 
         inputs, 

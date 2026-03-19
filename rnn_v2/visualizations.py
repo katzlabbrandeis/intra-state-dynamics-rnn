@@ -472,6 +472,7 @@ def plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, plots_dir):
         f"  Min LL (trial {worst_idx}): {per_gauss_ll[worst_idx]:.2f}",
         f"  Max LL (trial {np.argmax(per_gauss_ll)}): {np.max(per_gauss_ll):.2f}",
         f"  AIC:              {info_criteria['aic']:.2f}",
+        f"  AICr:              {info_criteria['aicr']:.2f}",
         f"  BIC:              {info_criteria['bic']:.2f}",
         f"{'=' * 40}",
     ]
@@ -494,6 +495,7 @@ def plot_loo_diagnostics(info_criteria, dataset_name, taste_ind, plots_dir):
             f"  Min LL (trial {np.nanargmin(per_poisson_ll)}): {np.nanmin(per_poisson_ll):.2f}",
             f"  Max LL (trial {np.nanargmax(per_poisson_ll)}): {np.nanmax(per_poisson_ll):.2f}",
             f"  AIC:              {info_criteria.get('poisson_aic', float('nan')):.2f}",
+            f"  AICr:              {info_criteria.get('poisson_aicr', float('nan')):.2f}",
             f"  BIC:              {info_criteria.get('poisson_bic', float('nan')):.2f}",
             f"{'=' * 40}",
             f"Note: Poisson LL should be negative.",

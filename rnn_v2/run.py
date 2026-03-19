@@ -34,10 +34,44 @@ from visualizations import (
 )
 from save_outputs import save_to_hdf5, save_latents_parquet, save_firing_parquet
 from neuron_eval import evaluate_neurons
+
+from train import MSELoss, smooth_MSELoss
+
+def get_criterion(loss_name):
+    if loss_name == 'smooth':
+        return smooth_MSELoss(alpha=0.05)
+    return MSELoss()
+
+import json
 # load in the configs: 
 config_path = '/home/vincent/Senior thesis work/blechRNN-master/config/blechrnn_config.json'
-
+# ----------------------------------------------------------------
+# Optuna override (set to True to use optimized params from Optuna)
+# NOTE: you really need to know which ones you want to use. Also, be aware that this applies to ALL datasets (hehe). 
+# ----------------------------------------------------------------
+USE_OPTUNA_PARAMS = False
+OPTUNA_PARAMS_PATH = '/home/vincent/Senior thesis work/blechRNN-master/jan2026validationR1_testing/optuna_optimization/AM26_4Tastes_200826_101430_repacked/optimized_params_used.json'
 config, paths, params, criterion = load_config(config_path)
+
+if USE_OPTUNA_PARAMS:
+    with open(OPTUNA_PARAMS_PATH, 'r') as f:
+        optuna_data = json.load(f)
+    # Handle both formats: nested (timestamped export) or flat (optimized_params_used)
+    if 'parameters' in optuna_data:
+        optuna_params = optuna_data['parameters']
+    else:
+        optuna_params = optuna_data
+    print(f"  [INFO] Overriding params with Optuna results from {OPTUNA_PARAMS_PATH}")
+    if 'best_trial_number' in optuna_data:
+        print(f"         Trial #{optuna_data['best_trial_number']}, "
+              f"Poisson AIC={optuna_data.get('best_poisson_aic', '?')}")
+    for key in ['hidden_size', 'rnn_layers', 'dropout', 'lr', 'loss_name']:
+        if key in optuna_params:
+            old_val = params.get(key)
+            params[key] = optuna_params[key]
+            print(f"         {key}: {old_val} -> {params[key]}")
+    criterion = get_criterion(params['loss_name'])
+    print(f"  [INFO] Final params: { {k: params[k] for k in ['hidden_size', 'rnn_layers', 'dropout', 'lr', 'loss_name']} }")
 
 from ephys_data import ephys_data
 
@@ -47,6 +81,15 @@ print(f"Validation mode: {validation_mode}")
 # ----------------------------------------------------------------
 # Loop over datasets
 # ----------------------------------------------------------------
+
+#if not USE_OPTUNA_PARAMS:
+#    # original params
+#    lr=0.001
+#    rnn_layers=2
+#    dropout=0.2
+#    loss_name = 'mse'
+#    rnn_layers = 2
+
 for subdir in sorted(os.listdir(paths['h5_dir'])):
     full_subdir_path = os.path.join(paths['h5_dir'], subdir)
     if not os.path.isdir(full_subdir_path):

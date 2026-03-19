@@ -9,13 +9,17 @@ import torch
 from model import autoencoderRNN
 from train import (
     train_model, compute_aic_bic,
-    poisson_log_likelihood, count_parameters, MSELoss, gaussian_log_likelihood
+    poisson_log_likelihood, count_parameters, MSELoss, gaussian_log_likelihood, compute_aicr_penalty
 )
 
 
 # ----------------------------------------------------------------
 # Mode 1: Standard train/test split
 # ----------------------------------------------------------------
+
+
+
+# NOTE: for the details on AICr, see where it's implemented. 
 
 def train_or_load(
         input_size,
@@ -270,10 +274,34 @@ def loo_then_train(
 
             del fold_net
 
+        # NEW: getting the regression of loss func vs ll -- both gaussian and poisson 
+        loss_gaussian_corr = float('nan')
+        loss_poisson_corr = float('nan')
+    
+        if len(per_trial_train_loss) > 2 and len(per_trial_gaussian_ll) > 2:
+            try:
+                loss_gaussian_corr = float(
+                    np.corrcoef(per_trial_train_loss, per_trial_gaussian_ll)[0, 1]
+                )
+            except Exception:
+                pass
+    
+        has_valid_poisson = per_trial_poisson_ll and len(per_trial_poisson_ll) > 2
+        if has_valid_poisson:
+            valid = [i for i, p in enumerate(per_trial_poisson_ll) if not np.isnan(p)]
+            if len(valid) > 2:
+                losses = [per_trial_train_loss[i] for i in valid]
+                lls = [per_trial_poisson_ll[i] for i in valid]
+                try:
+                    loss_poisson_corr = float(np.corrcoef(losses, lls)[0, 1])
+                except Exception:
+                    pass
+
         # Aggregate LOO results — Gaussian (primary, consistent with MSE training)
         gaussian_total_ll = sum(per_trial_gaussian_ll)
         n_obs_zscore = labels_tensor.numel()
         gaussian_aic = 2 * n_params - 2 * gaussian_total_ll
+        gaussian_aicr = compute_aicr_penalty(n_obs_zscore, n_params) - 2 * gaussian_total_ll
         gaussian_bic = n_params * np.log(n_obs_zscore) - 2 * gaussian_total_ll
 
         # Aggregate LOO results — Poisson (on raw counts)
@@ -283,15 +311,18 @@ def loo_then_train(
                 poisson_total_ll = sum(valid_poisson)
                 n_obs_raw = raw_labels_tensor.numel()
                 poisson_aic = 2 * n_params - 2 * poisson_total_ll
+                poisson_aicr = compute_aicr_penalty(n_obs_zscore, n_params) - 2 * poisson_total_ll
                 poisson_bic = n_params * np.log(n_obs_raw) - 2 * poisson_total_ll
             else:
                 poisson_total_ll = float('nan')
                 poisson_aic = float('nan')
+                poisson_aicr = float('nan')
                 poisson_bic = float('nan')
         else:
             per_trial_poisson_ll = []
             poisson_total_ll = float('nan')
             poisson_aic = float('nan')
+            poisson_aicr = float('nan')
             poisson_bic = float('nan')
 
         total_elapsed = time.time() - total_start
@@ -299,14 +330,18 @@ def loo_then_train(
         info_criteria = dict(
             # Gaussian (primary — consistent with MSE)
             aic=gaussian_aic,
+            aicr=gaussian_aicr,
             bic=gaussian_bic,
             log_likelihood=gaussian_total_ll,
             per_trial_ll=per_trial_gaussian_ll,
+            loss_gaussian_corr=loss_gaussian_corr,
             # Poisson (on raw counts)
             poisson_aic=poisson_aic,
+            poisson_aicr=poisson_aicr,
             poisson_bic=poisson_bic,
             poisson_log_likelihood=poisson_total_ll,
             per_trial_poisson_ll=per_trial_poisson_ll,
+            loss_poisson_corr=loss_poisson_corr,
             # Shared
             per_trial_train_loss=per_trial_train_loss,
             per_fold_loss_history=per_fold_loss_history,
@@ -327,14 +362,16 @@ def loo_then_train(
         print(f"    Total LL:      {gaussian_total_ll:.2f}")
         print(f"    Mean LL/trial: {np.mean(per_trial_gaussian_ll):.2f} "
               f"+/- {np.std(per_trial_gaussian_ll):.2f}")
-        print(f"    AIC:           {gaussian_aic:.2f}")
-        print(f"    BIC:           {gaussian_bic:.2f}")
+        print(f"    gAIC:           {gaussian_aic:.2f}")
+        print(f"    gAICr:           {gaussian_aicr:.2f}")
+        print(f"    gBIC:           {gaussian_bic:.2f}")
         if not np.isnan(poisson_total_ll):
             print(f"    --- Poisson (raw count space) ---")
             print(f"    Total LL:      {poisson_total_ll:.2f}")
             print(f"    Mean LL/trial: {np.nanmean(per_trial_poisson_ll):.2f} "
                   f"+/- {np.nanstd(per_trial_poisson_ll):.2f}")
-            print(f"    AIC:           {poisson_aic:.2f}")
+            print(f"    pAIC:           {poisson_aic:.2f}")
+            print(f"    pAICr:           {poisson_aicr:.2f}")
             print(f"    BIC:           {poisson_bic:.2f}")
         else: 
             print("WARN: Poisson LL (raw count space) is nan for some reason.")
@@ -417,3 +454,266 @@ def run_prediction(net, inputs_tensor, device):
     outs = outs.cpu().numpy()
     latent_outs = latent_outs.cpu().numpy()
     return outs, latent_outs
+
+
+# ----------------------------------------------------------------
+# K-fold cross-validation (faster alternative to LOO for sweeps)
+
+# NOTE: Edit the number of folds to modify how much is held out. 
+# A note, Optuna is designed to be reasonably resistant to noise, 
+# but not immune. The higher the K, theoretically, the higher the 
+# noise of the info we feed it. There is a fundamental trade-off here. 
+# ----------------------------------------------------------------
+
+def kfold_evaluate(
+        inputs_tensor,
+        labels_tensor,
+        input_size,
+        hidden_size,
+        output_size,
+        device,
+        criterion,
+        train_steps,
+        patience,
+        lr=0.001,
+        rnn_layers=2,
+        dropout=0.2,
+        scaler=None,
+        pca_obj=None,
+        raw_labels_tensor=None,
+        n_folds=5,
+        seed=None,
+        verbose=False,
+        taste_ind=None,
+        ):
+    """
+    K-fold cross-validation for fast hyperparameter evaluation.
+
+    Unlike loo_then_train, this does NOT retrain a final model — it only
+    returns evaluation metrics. Designed to be called from Optuna sweeps
+    where you need a reliable ranking signal without the cost of 30-fold
+    LOO + full retrain. Attempting to hit a balance between holding stuff out 
+    and computational cost. 
+
+    Trials are randomly assigned to K folds. Each fold is held out once
+    while the model trains on the remaining K-1 folds. Gaussian and
+    Poisson log-likelihoods are computed on each held-out fold and
+    aggregated into AIC/BIC.
+
+    Args:
+        inputs_tensor: (time, trials, input_size)
+        labels_tensor: (time, trials, output_size)
+        input_size, hidden_size, output_size: int
+        device: torch device
+        criterion: loss function
+        train_steps, patience: training settings for each fold
+        lr, rnn_layers, dropout: model/optimizer settings
+        scaler: fitted StandardScaler (for Poisson LL)
+        pca_obj: fitted PCA or None (for Poisson LL)
+        raw_labels_tensor: (time, trials, n_neurons) raw counts (for Poisson LL)
+        n_folds: int, number of folds (default 5)
+        seed: int or None, random seed for fold assignment
+        verbose: bool
+        taste_ind: int, for logging
+
+    Returns:
+        info_criteria: dict with K-fold AIC/BIC (Gaussian + Poisson),
+                       per-fold LLs, fold loss histories, timing
+    """
+    n_trials = inputs_tensor.shape[1]
+
+    # Assign trials to folds randomly
+    rng = np.random.RandomState(seed)
+    fold_ids = np.zeros(n_trials, dtype=int)
+    perm = rng.permutation(n_trials)
+    for i, idx in enumerate(perm):
+        fold_ids[idx] = i % n_folds
+
+    # Parameter count
+    dummy_net = autoencoderRNN(
+        input_size, hidden_size, output_size,
+        rnn_layers=rnn_layers, dropout=dropout
+    )
+    n_params = count_parameters(dummy_net)
+    del dummy_net
+
+    has_raw_labels = raw_labels_tensor is not None and scaler is not None
+
+    per_fold_gaussian_ll = []
+    per_fold_poisson_ll = []
+    per_fold_train_loss = []
+    per_fold_loss_history = []
+    per_fold_n_steps = []
+    total_start = time.time()
+
+    for k in range(n_folds):
+        fold_start = time.time()
+
+        test_mask = np.where(fold_ids == k)[0]
+        train_mask = np.where(fold_ids != k)[0]
+
+        fold_train_inputs = inputs_tensor[:, train_mask].to(device)
+        fold_train_labels = labels_tensor[:, train_mask].to(device)
+        fold_test_inputs = inputs_tensor[:, test_mask].to(device)
+        fold_test_labels = labels_tensor[:, test_mask].to(device)
+
+        # Fresh model
+        fold_net = autoencoderRNN(
+            input_size, hidden_size, output_size,
+            rnn_layers=rnn_layers, dropout=dropout
+        )
+        fold_net.to(device)
+
+        # Train
+        fold_net, fold_loss, _, _ = train_model(
+            fold_net, fold_train_inputs, fold_train_labels, output_size,
+            train_steps=train_steps, lr=lr,
+            criterion=criterion,
+            test_inputs=fold_test_inputs, test_labels=fold_test_labels,
+            patience=patience,
+            quiet=True,
+        )
+
+        # Evaluate — Gaussian LL
+        fold_net.eval()
+        with torch.no_grad():
+            pred, _ = fold_net(fold_test_inputs)
+
+        g_ll = gaussian_log_likelihood(pred, fold_test_labels)
+        per_fold_gaussian_ll.append(g_ll)
+
+        # Evaluate — Poisson LL
+        if has_raw_labels:
+            fold_raw_labels = raw_labels_tensor[:, test_mask]
+            pred_np = pred.cpu().numpy()
+            pred_long = pred_np.reshape(-1, pred_np.shape[-1])
+
+            p_ll = float('nan')
+            if pca_obj is not None:
+                try:
+                    pred_long = pca_obj.inverse_transform(pred_long)
+                except Exception:
+                    pred_long = None
+
+            if pred_long is not None:
+                try:
+                    pred_long = scaler.inverse_transform(pred_long)
+                    pred_long = np.clip(pred_long, a_min=1e-8, a_max=None)
+                    pred_counts = torch.tensor(pred_long, dtype=torch.float32)
+                    raw_flat = fold_raw_labels.reshape(-1, fold_raw_labels.shape[-1])
+                    if pred_counts.shape == raw_flat.shape:
+                        p_ll = poisson_log_likelihood(pred_counts, raw_flat)
+                except Exception:
+                    pass
+
+            per_fold_poisson_ll.append(p_ll)
+
+        per_fold_train_loss.append(fold_loss[-1])
+        per_fold_loss_history.append(fold_loss)
+        per_fold_n_steps.append(len(fold_loss))
+
+        if verbose:
+            elapsed = time.time() - fold_start
+            p_str = f" | Poisson LL: {per_fold_poisson_ll[-1]:.2f}" if has_raw_labels else ""
+            n_test = len(test_mask)
+            print(f"    Fold {k+1}/{n_folds} ({n_test} held-out trials) | "
+                  f"Gauss LL: {g_ll:.2f}{p_str} | "
+                  f"Final loss: {fold_loss[-1]:.4f} | "
+                  f"{elapsed:.1f}s")
+
+        del fold_net
+    # Loss vs LL conbsistency (higher r = more reliable fits across DS, better generalizations) -- both poisson and gauss bc whyt not 
+    loss_gaussian_corr = float('nan')
+    loss_poisson_corr = float('nan')
+    if len(per_fold_train_loss) > 2 and len(per_fold_gaussian_ll) > 2:
+        try:
+            loss_gaussian_corr = float(
+                np.corrcoef(per_fold_train_loss, per_fold_gaussian_ll)[0, 1]
+            )
+        except Exception:
+            pass
+ 
+    if has_raw_labels and len(per_fold_train_loss) > 2:
+        valid = [i for i, p in enumerate(per_fold_poisson_ll) if not np.isnan(p)]
+        if len(valid) > 2:
+            losses = [per_fold_train_loss[i] for i in valid]
+            lls = [per_fold_poisson_ll[i] for i in valid]
+            try:
+                loss_poisson_corr = float(np.corrcoef(losses, lls)[0, 1])
+            except Exception:
+                pass
+ 
+    # --- Aggregate: Gaussian ---
+    gaussian_total_ll = sum(per_fold_gaussian_ll)
+    n_obs_zscore = labels_tensor.numel()
+    gaussian_aic = 2 * n_params - 2 * gaussian_total_ll
+    gaussian_aicr = compute_aicr_penalty(n_obs_zscore, n_params) - 2 * gaussian_total_ll 
+    gaussian_bic = n_params * np.log(n_obs_zscore) - 2 * gaussian_total_ll
+
+    # --- Aggregate: Poisson ---
+    if has_raw_labels and per_fold_poisson_ll:
+        valid_poisson = [v for v in per_fold_poisson_ll if not np.isnan(v)]
+        if valid_poisson:
+            poisson_total_ll = sum(valid_poisson)
+            n_obs_raw = raw_labels_tensor.numel()
+            poisson_aic = 2 * n_params - 2 * poisson_total_ll
+            poisson_aicr = compute_aicr_penalty(n_obs_zscore, n_params) - 2 * poisson_total_ll
+            poisson_bic = n_params * np.log(n_obs_raw) - 2 * poisson_total_ll
+        else:
+            poisson_total_ll = float('nan')
+            poisson_aic = float('nan')
+            poisson_aicr = float('nan')
+            poisson_bic = float('nan')
+    else:
+        per_fold_poisson_ll = []
+        poisson_total_ll = float('nan')
+        poisson_aic = float('nan')
+        poisson_aicr = float('nan')
+        poisson_bic = float('nan')
+
+    total_elapsed = time.time() - total_start
+
+    info_criteria = dict(
+        # Gaussian
+        aic=gaussian_aic,
+        aicr = gaussian_aicr,
+        bic=gaussian_bic,
+        log_likelihood=gaussian_total_ll,
+        per_fold_gaussian_ll=per_fold_gaussian_ll,
+        loss_gaussian_corr=loss_gaussian_corr,
+        # Poisson
+        poisson_aic=poisson_aic,
+        poisson_aicr = poisson_aicr,
+        poisson_bic=poisson_bic,
+        poisson_log_likelihood=poisson_total_ll,
+        per_fold_poisson_ll=per_fold_poisson_ll,
+        loss_poisson_corr=loss_poisson_corr,
+        # Shared
+        per_fold_train_loss=per_fold_train_loss,
+        per_fold_loss_history=per_fold_loss_history,
+        per_fold_n_steps=per_fold_n_steps,
+        n_params=n_params,
+        n_observations=n_obs_zscore,
+        n_folds=n_folds,
+        n_trials=n_trials,
+        hidden_size=hidden_size,
+        eval_set='kfold',
+        total_time_s=total_elapsed,
+    )
+
+    if verbose:
+        print(f"\n  --- K-Fold Summary (taste {taste_ind}, K={n_folds}, "
+              f"hidden={hidden_size}) ---")
+        print(f"    Params:        {n_params}")
+        print(f"    --- Gaussian ---")
+        print(f"    Total LL:      {gaussian_total_ll:.2f}")
+        print(f"    gAIC:           {gaussian_aic:.2f}")
+        print(f"    gAICr:           {gaussian_aicr:.2f}")
+        if not np.isnan(poisson_total_ll):
+            print(f"    --- Poisson ---")
+            print(f"    Total LL:      {poisson_total_ll:.2f}")
+            print(f"    AIC:           {poisson_aic:.2f}")
+            print(f"    AICr:           {poisson_aicr:.2f}")
+        print(f"    Time:          {total_elapsed:.1f}s")
+
+    return info_criteria
