@@ -13,11 +13,12 @@ import numpy as np
 import os
 from tqdm import tqdm
 from pprint import pprint as pp
-from scipy.stats import ttest_rel
+from scipy.stats import ttest_rel, percentileofscore
 from matplotlib_venn import venn3, venn3_circles, venn3_unweighted
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 from cloudpickle import dump, load
+
 
 tqdm.pandas()
 
@@ -29,6 +30,12 @@ import pymc as pm
 
 cp_file_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/pkl_files/tau_frame.pkl'
 tau_frame = pd.read_pickle(cp_file_path)
+
+sys.path.append('/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/src/abu/model_fitting/population_analysis/')
+import utils
+
+from importlib import reload
+reload(utils)
 
 ##############################
 base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
@@ -339,6 +346,7 @@ os.makedirs(this_artifact_dir, exist_ok=True)
 # ind = 0
 # for ind in range(len(significant_snippets_grouped)):
 #     this_group = list(significant_snippets_grouped)[ind][1]
+all_warped_arrays = dict()
 for group_ind, this_group in significant_snippets_grouped:
     group_name_str = "_".join([str(x) for x in group_ind])
     this_spikes = this_group['spike_data'].tolist()
@@ -375,13 +383,16 @@ for group_ind, this_group in significant_snippets_grouped:
         for t in interp_times:
             wapred_array[i, t] += 1
 
+    all_warped_arrays[group_name_str] = wapred_array
+
     with pm.Model() as model:
         hyper_step = pm.Exponential("hyper_step", 0.05)
         step_size = pm.Exponential("step_size", hyper_step)
         lambda_latent = pm.GaussianRandomWalk("volatility", sigma=step_size, 
                         shape=(n_trials, n_bins))
         lambda_ = pm.Deterministic('lambda_', np.exp(lambda_latent))
-        rate = pm.Poisson("rate", lambda_, observed=wapred_array)
+        data = pm.Data("data", wapred_array)
+        rate = pm.Poisson("rate", lambda_, observed=data)
 
     with model:
         # trace = pm.sample(nuts_sampler="numpyro")
@@ -427,6 +438,157 @@ for group_ind, this_group in significant_snippets_grouped:
     fig.savefig(os.path.join(this_plot_dir, f'{group_name_str}_firing_rate_inference.svg'), bbox_inches='tight')
     plt.close(fig)
     # plt.show()
+
+# Also calcualte rates for shuffled data to compare deviation from flatness
+with pm.Model() as shuffled_model:
+    hyper_step = pm.Exponential("hyper_step", 0.05)
+    step_size = pm.Exponential("step_size", hyper_step)
+    lambda_latent = pm.GaussianRandomWalk("volatility", sigma=step_size, 
+                    shape=(n_trials, n_bins))
+    lambda_ = pm.Deterministic('lambda_', np.exp(lambda_latent))
+    data = pm.Data("data", wapred_array)
+    rate = pm.Poisson("rate", lambda_, observed=data)
+
+all_shuffled_rates = dict()
+n_shuffles = 10
+for group_ind, this_group in tqdm(significant_snippets_grouped):
+    group_name_str = "_".join([str(x) for x in group_ind])
+    warped_array = all_warped_arrays[group_name_str]
+
+    shuffle_list = []
+    for i in range(n_shuffles):
+
+        shuffled_array = np.copy(warped_array)
+        for i in range(shuffled_array.shape[0]):
+            np.random.shuffle(shuffled_array[i])
+
+        # fig, ax = plt.subplots(1,2,figsize=(4, 2), sharey=True)
+        # ax[0].imshow(warped_array, aspect='auto', cmap='Greys', origin='lower')
+        # ax[0].set_title(f'{group_name_str} Warped Spike Raster')
+        # ax[0].set_ylabel('Trial Index')
+        # ax[1].imshow(shuffled_array, aspect='auto', cmap='Greys', origin='lower')
+        # ax[1].set_title(f'{group_name_str} Shuffled Warped Spike Raster')
+        # ax[1].set_xlabel('Warped Time Bins')
+        # plt.show()
+
+        with shuffled_model:
+            pm.set_data({"data": shuffled_array})
+            fit = pm.fit(n=50000, method='advi', progressbar=True)
+            trace = fit.sample(1000)
+
+        ppc_list = pm.sample_posterior_predictive(trace, model = shuffled_model, var_names = ['lambda_'])
+        mean_ppc = ppc_list.posterior_predictive.lambda_.mean(axis=(0,1)).values
+        shuffle_list.append(mean_ppc)
+    all_shuffled_rates[group_name_str] = shuffle_list
+    # Dump to have checkpoint in case of long runtime
+    shuffle_artifact_path = os.path.join(this_artifact_dir, f'{group_name_str}_shuffled_rates.pkl')
+    with open(shuffle_artifact_path, 'wb') as f:
+        dump(shuffle_list, f)
+
+
+# Calculate bits-per-spike for each grand_mean_rate
+all_grand_mean_rates = dict()
+for group_ind, this_group in tqdm(significant_snippets_grouped):
+    group_name_str = "_".join([str(x) for x in group_ind])
+    artifact_path = os.path.join(this_artifact_dir, f'{group_name_str}_model_trace.pkl')
+    with open(artifact_path, 'rb') as f:
+        out_dict = load(f)
+    trace = out_dict['trace']
+    ppc_list = pm.sample_posterior_predictive(trace, model = out_dict['model'], var_names = ['lambda_'])
+    mean_ppc = ppc_list.posterior_predictive.lambda_.mean(axis=(0,1)).values
+    grand_mean_rate = mean_ppc.mean(axis=0)
+    all_grand_mean_rates[group_name_str] = grand_mean_rate
+
+def calc_flat_deviation(ts, n_shuffles = 10_000):
+    """
+    Calculates deviation of time-seroes from unformity
+
+    Args:
+        ts (np.ndarray): Time-series data
+    Returns:
+        stat (float): Deviation statistic (e.g., standard deviation, entropy, etc.)
+        p_value (float): P-value from statistical test comparing to null distribution
+    """
+    mean_val = np.mean(ts)
+    dev = np.cumsum(ts - mean_val)
+    # Generate null distribution by shuffling the time-series
+    shuffles = np.array([np.random.permutation(ts) for _ in range(n_shuffles)])
+    shuffle_devs = np.array([np.cumsum(shuffle - mean_val) for shuffle in shuffles])
+
+    stat = np.abs(dev).max()
+    shuffle_stats = np.abs(shuffle_devs).max(axis=1)
+
+    # fig, ax = plt.subplots(3,1,sharex=True)
+    # ax[0].plot(ts, color='blue', label='Original')
+    # ax[0].axhline(mean_val, color='red', linestyle='--', label='Mean Value')
+    # ax[1].plot(dev, color='blue', label='Original')
+    # ax[2].imshow(shuffle_devs, aspect='auto', cmap='Reds', alpha=0.5)
+    # plt.show()
+
+    p_value = 1 - percentileofscore(shuffle_stats, stat) / 100.0  # Convert to proportion
+    return stat, p_value
+
+
+# all_bits_per_spike = dict()
+all_deviation_stats = dict()
+for group_ind, this_group in tqdm(significant_snippets_grouped):
+    group_name_str = "_".join([str(x) for x in group_ind])
+    grand_mean_rate = all_grand_mean_rates[group_name_str]
+    warped_array = all_warped_arrays[group_name_str]
+
+    dev_stat, p_value = calc_flat_deviation(grand_mean_rate)
+    all_deviation_stats[group_name_str] = {'dev_stat': dev_stat, 'p_value': p_value}
+
+plt.hist([stat['p_value'] for stat in all_deviation_stats.values()], edgecolor='black')
+plt.show()
+
+# Plot top and bottom n rates
+dev_stats_df = pd.DataFrame(all_deviation_stats).T.reset_index().rename(columns={'index': 'group_name'})
+# Add mean rate info to dev_stats_df
+dev_stats_df['mean_rate'] = dev_stats_df['group_name'].map(lambda x: all_grand_mean_rates[x])
+
+n = 10
+top_deviation = dev_stats_df.sort_values(by='p_value', ascending=True).head(n).reset_index(drop=True)
+bottom_deviation = dev_stats_df.sort_values(by='p_value', ascending=False).head(n).reset_index(drop=True)
+
+fig, ax = plt.subplots(n, 2, figsize=(8, 4*n), sharex=True)
+for i, row in top_deviation.iterrows():
+    group_name_str = row['group_name']
+    rate = row['mean_rate']
+    ax[i, 0].plot(rate, color='blue')
+    ax[i, 0].set_ylabel(f'p={row["p_value"]:.4f}')
+for i, row in bottom_deviation.iterrows():
+    group_name_str = row['group_name']
+    rate = row['mean_rate']
+    ax[i, 1].plot(rate, color='orange')
+    ax[i, 1].set_ylabel(f'p={row["p_value"]:.4f}')
+ax[0, 0].set_title('Top Deviation from Flatness')
+ax[0, 1].set_title('Bottom Deviation from Flatness')
+fig.suptitle('Grand Mean Firing Rates for Groups with Highest and Lowest Deviation from Flatness', fontsize=16)
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'deviation_from_flatness_top_bottom_rates.svg'), bbox_inches='tight')
+plt.close(fig)
+# plt.show()
+
+
+    # fig, ax = plt.subplots(2,1,figsize=(4, 4), sharex=True)
+    # ax[0].imshow(warped_array, aspect='auto', cmap='Greys', origin='lower')
+    # ax[0].set_title(f'{group_name_str} Warped Spike Raster')
+    # ax[0].set_ylabel('Trial Index')
+    # ax[1].plot(grand_mean_rate, color='black', linewidth=2)
+    # ax[1].set_title(f'{group_name_str} Inferred Firing Rate')
+    # ax[1].set_xlabel('Warped Time Bins')
+    # plt.tight_layout()
+    # plt.show()
+    
+    # # Repeat grand_mean_rate along axis 0 to match warped_array shape
+    # grand_mean_rate_repeated = np.tile(grand_mean_rate, (warped_array.shape[0], 1))
+    #
+    # bits_per_spike = utils.calc_bits_per_spike(warped_array, grand_mean_rate_repeated)
+    # all_bits_per_spike[group_name_str] = bits_per_spike
+
+# plt.hist(list(all_bits_per_spike.values()), edgecolor='black')
+# plt.show()
 
 ##############################
 # For each neuron, plot both warped and unwarped firing rates for all states for a single taste
