@@ -17,6 +17,7 @@ from scipy.stats import ttest_rel
 from matplotlib_venn import venn3, venn3_circles, venn3_unweighted
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
+from cloudpickle import dump, load
 
 tqdm.pandas()
 
@@ -330,83 +331,102 @@ significant_snippets.drop(
 significant_snippets_grouped = significant_snippets.groupby(
         ['basename', 'neuron_ind', 'taste_num', 'state_ind'])
 
-ind = 0
-this_group = list(significant_snippets_grouped)[ind][1]
-this_spikes = this_group['spike_data'].tolist()
+this_plot_dir = os.path.join(plot_dir, 'sig_rate_plots')
+this_artifact_dir = os.path.join(artifacts_dir, 'sig_rate_plots')
+os.makedirs(this_plot_dir, exist_ok=True)
+os.makedirs(this_artifact_dir, exist_ok=True)
 
-# Plot raster
-trial_durations = [len(trial) for trial in this_spikes]
-# Sort trials by duration
-sort_inds = np.argsort(trial_durations)
-sorted_durations = [trial_durations[i] for i in sort_inds]
-sorted_spikes = [this_spikes[i] for i in sort_inds]
-sorted_spike_times = [np.where(trial)[0] for trial in sorted_spikes]
-sorted_trial_inds = [np.full_like(times, i) for i, times in enumerate(sorted_spike_times)]
-flat_times = np.concatenate(spike_times)
-flat_trial_inds = np.concatenate(trial_inds)
+# ind = 0
+# for ind in range(len(significant_snippets_grouped)):
+#     this_group = list(significant_snippets_grouped)[ind][1]
+for group_ind, this_group in significant_snippets_grouped:
+    group_name_str = "_".join([str(x) for x in group_ind])
+    this_spikes = this_group['spike_data'].tolist()
 
-# Interpolate to same length
-warp_len = 20
-all_interp_spike_times = []
-for i, trial in enumerate(sorted_spike_times):
-    interp_spike_times = (trial / sorted_durations[i]) * (warp_len - 1) 
-    # Convert to int
-    interp_spike_times = np.round(interp_spike_times).astype(int)
-    all_interp_spike_times.append(interp_spike_times)
+    # Plot raster
+    trial_durations = [len(trial) for trial in this_spikes]
+    # Sort trials by duration
+    sort_inds = np.argsort(trial_durations)
+    sorted_durations = [trial_durations[i] for i in sort_inds]
+    sorted_spikes = [this_spikes[i] for i in sort_inds]
+    sorted_spike_times = [np.where(trial)[0] for trial in sorted_spikes]
+    sorted_trial_inds = [np.full_like(times, i) for i, times in enumerate(sorted_spike_times)]
+    flat_times = np.concatenate(sorted_spike_times)
+    flat_trial_inds = np.concatenate(sorted_trial_inds)
 
-flat_interp_spike_times = np.concatenate(all_interp_spike_times)
-assert len(flat_interp_spike_times) == len(flat_times)  # should have same number of spikes before and after warping
+    # Interpolate to same length
+    warp_len = 20
+    all_interp_spike_times = []
+    for i, trial in enumerate(sorted_spike_times):
+        interp_spike_times = (trial / sorted_durations[i]) * (warp_len - 1) 
+        # Convert to int
+        interp_spike_times = np.round(interp_spike_times).astype(int)
+        all_interp_spike_times.append(interp_spike_times)
 
-# Infer firing rate with PyMC using Gaussian Random Walk prior on warped spikes 
-n_trials = len(this_group)
-n_bins = warp_len  # after warping to 100 bins
-# Convert warped spikes to array
-wapred_array = np.zeros((n_trials, n_bins))
-for i, interp_times in enumerate(all_interp_spike_times):
-    for t in interp_times:
-        wapred_array[i, t] += 1
+    flat_interp_spike_times = np.concatenate(all_interp_spike_times)
+    assert len(flat_interp_spike_times) == len(flat_times)  # should have same number of spikes before and after warping
 
-with pm.Model() as model:
-    hyper_step = pm.Exponential("hyper_step", 0.05)
-    step_size = pm.Exponential("step_size", hyper_step)
-    lambda_latent = pm.GaussianRandomWalk("volatility", sigma=step_size, 
-                    shape=(n_trials, n_bins))
-    lambda_ = pm.Deterministic('lambda_', np.exp(lambda_latent))
-    rate = pm.Poisson("rate", lambda_, observed=wapred_array)
+    # Infer firing rate with PyMC using Gaussian Random Walk prior on warped spikes 
+    n_trials = len(this_group)
+    n_bins = warp_len  # after warping to 100 bins
+    # Convert warped spikes to array
+    wapred_array = np.zeros((n_trials, n_bins))
+    for i, interp_times in enumerate(all_interp_spike_times):
+        for t in interp_times:
+            wapred_array[i, t] += 1
 
-with model:
-    # trace = pm.sample(nuts_sampler="numpyro")
-    # trace = pm.sample(draws =500, chains=8, cores=8)
-    # Fit with ADVI for speed
-    fit = pm.fit(n=50000, method='advi', progressbar=True)
-    trace = fit.sample(1000)
+    with pm.Model() as model:
+        hyper_step = pm.Exponential("hyper_step", 0.05)
+        step_size = pm.Exponential("step_size", hyper_step)
+        lambda_latent = pm.GaussianRandomWalk("volatility", sigma=step_size, 
+                        shape=(n_trials, n_bins))
+        lambda_ = pm.Deterministic('lambda_', np.exp(lambda_latent))
+        rate = pm.Poisson("rate", lambda_, observed=wapred_array)
 
-ppc_list = pm.sample_posterior_predictive(trace, model = model, var_names = ['lambda_'])
-mean_ppc = ppc_list.posterior_predictive.lambda_.mean(axis=(0,1)).values
-grand_mean_rate = mean_ppc.mean(axis=0)
+    with model:
+        # trace = pm.sample(nuts_sampler="numpyro")
+        # trace = pm.sample(draws =500, chains=8, cores=8)
+        # Fit with ADVI for speed
+        fit = pm.fit(n=50000, method='advi', progressbar=True)
+        trace = fit.sample(1000)
 
-fig, ax = plt.subplots(2,2,figsize=(4, 4), sharey='row', sharex='col')
-ax[0,0].scatter(flat_times, flat_trial_inds, marker='|')
-for trial_idx, duration in enumerate(sorted_durations):
-    ax[0,0].plot(duration, trial_idx, color='red', marker = 'o', alpha=0.5)  # Mark end of trial with red dot
-ax[0,0].set_xlabel('Time (ms)')
-ax[0,0].set_ylabel('Trial Index')
-# Plot warped spikes
-# ax[0,1].scatter(flat_interp_spike_times, flat_trial_inds, marker='|')
-ax[0,1].imshow(wapred_array, aspect='auto', cmap='Greys', origin='lower')
-ax[0,1].set_xlabel('Warped Time Bins')
-ax[0,0].set_title('Unwarped Spike Raster')
-ax[0,1].set_title('Warped Spike Raster')
-ax[1,1].plot(mean_ppc.T, color='red', alpha=0.2)
-ax[1,1].plot(grand_mean_rate, color='black', linewidth=2, label='Grand Mean Rate')
-ax[1,1].set_xlabel('Warped Time Bins')
-ax[1,1].set_title('Inferred Firing Rate from Warped Spikes')
-ax[1,1].legend()
-# Scale [1,1] to match grand mean rate range
-ax[1,1].set_ylim(grand_mean_rate.min() * 0.9, grand_mean_rate.max() * 1.1)
-fig.suptitle(f'{this_group["basename"].iloc[0]}\nNeuron {this_group["neuron_ind"].iloc[0]} Taste {this_group["taste_num"].iloc[0]} State {this_group["state_ind"].iloc[0]}')
-plt.tight_layout()
-plt.show()
+    out_dict = {
+            'model': model,
+            'trace': trace,
+            'fit': fit,
+            }
+    artifact_path = os.path.join(this_artifact_dir, f'{group_name_str}_model_trace.pkl')
+    with open(artifact_path, 'wb') as f:
+        dump(out_dict, f)
+
+    ppc_list = pm.sample_posterior_predictive(trace, model = model, var_names = ['lambda_'])
+    mean_ppc = ppc_list.posterior_predictive.lambda_.mean(axis=(0,1)).values
+    grand_mean_rate = mean_ppc.mean(axis=0)
+
+    fig, ax = plt.subplots(2,2,figsize=(4, 4), sharey='row', sharex='col')
+    ax[0,0].scatter(flat_times, flat_trial_inds, marker='|')
+    for trial_idx, duration in enumerate(sorted_durations):
+        ax[0,0].plot(duration, trial_idx, color='red', marker = 'o', alpha=0.5)  # Mark end of trial with red dot
+    ax[0,0].set_xlabel('Time (ms)')
+    ax[0,0].set_ylabel('Trial Index')
+    # Plot warped spikes
+    # ax[0,1].scatter(flat_interp_spike_times, flat_trial_inds, marker='|')
+    ax[0,1].imshow(wapred_array, aspect='auto', cmap='Greys', origin='lower')
+    ax[0,1].set_xlabel('Warped Time Bins')
+    ax[0,0].set_title('Unwarped Spike Raster')
+    ax[0,1].set_title('Warped Spike Raster')
+    ax[1,1].plot(mean_ppc.T, color='red', alpha=0.2)
+    ax[1,1].plot(grand_mean_rate, color='black', linewidth=2, label='Grand Mean Rate')
+    ax[1,1].set_xlabel('Warped Time Bins')
+    ax[1,1].set_title('Inferred Firing Rate from Warped Spikes')
+    # ax[1,1].legend()
+    # Scale [1,1] to match grand mean rate range
+    ax[1,1].set_ylim(grand_mean_rate.min() * 0.9, grand_mean_rate.max() * 1.1)
+    fig.suptitle(f'{this_group["basename"].iloc[0]}\nNeuron {this_group["neuron_ind"].iloc[0]} Taste {this_group["taste_num"].iloc[0]} State {this_group["state_ind"].iloc[0]}')
+    plt.tight_layout()
+    fig.savefig(os.path.join(this_plot_dir, f'{group_name_str}_firing_rate_inference.svg'), bbox_inches='tight')
+    plt.close(fig)
+    # plt.show()
 
 ##############################
 # For each neuron, plot both warped and unwarped firing rates for all states for a single taste
