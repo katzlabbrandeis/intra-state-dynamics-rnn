@@ -1,4 +1,6 @@
 """
+ENV: pytau0.3
+
 Analysis and plots for single neuron analysis of Calia-Bogan 2025
 1- Paired test on first vs last half of states for single-neurons
 2- Plot of warped single-neuron firing rates
@@ -52,83 +54,88 @@ spike_train_dict = {k: v[list(v.files)[0]] for k, v in spike_train_dict.items()}
 
 ##############################
 # Get state snippets for all neurons
-time_lims = [2000, 4000]
-state_snippet_list = []
-for ind, row in tqdm(tau_frame.iterrows()):
-    session_name = row['basename']
-    # Shape: (trials, changepoints)
-    change_points = row['tau']
-    change_points -= time_lims[0]  # adjust to start at 0
-    
-    if np.isnan(change_points).all():
-        print(f"Skipping {session_name} taste {row['taste_num']} due to all NaN change points")
-        continue
 
-    taste_ind = row['taste_num']
-    # Shape: (trials, neurons, time)
-    spike_trains = spike_train_dict[session_name][int(taste_ind)]
-    # Cut to time_lims
-    spike_trains = spike_trains[:, :, time_lims[0]:time_lims[1]]
-    # get_state_snippets(spike_array, tau_array)
-    # Extract neural activity snippets for each state and trial without averaging
-    # 
-    # Returns raw neural activity for each state as a ragged array structure,
-    # where each state can have different durations across trials.
-    # 
-    # Args:
-    #     spike_array (np.ndarray): Neural activity data
-    #         Shape: (n_trials, n_neurons, n_bins)
-    #     tau_array (np.ndarray): Changepoint positions for each trial
-    #         Shape: (n_trials, n_changepoints)
-    # 
-    # Returns:
-    #     list: Nested list structure organized as [state][trial]
-    #         - Outer list length: n_states (n_changepoints + 1)
-    #         - Inner list length: n_trials
-    #         - Each element shape: (n_neurons, bins_in_state)
-    #         Note: bins_in_state varies by trial and state
-    state_snippets = get_state_snippets(spike_trains, change_points) 
+reload_data_bool = False
 
-    # Add to dict individually for each neuron
-    for state_ind in range(len(state_snippets)):
-        for trial_ind in range(len(state_snippets[state_ind])):
-            for neuron_ind in range(spike_trains.shape[1]):
-                state_snippet_list.append({
-                    'basename': session_name,
-                    'taste_num': taste_ind,
-                    'state_ind': state_ind,
-                    'trial_ind': trial_ind,
-                    'neuron_ind': neuron_ind,
-                    'spike_data': state_snippets[state_ind][trial_ind][neuron_ind]
-                })
+if reload_data_bool:
+    time_lims = [2000, 4000]
+    state_snippet_list = []
+    for ind, row in tqdm(tau_frame.iterrows()):
+        session_name = row['basename']
+        # Shape: (trials, changepoints)
+        change_points = row['tau']
+        change_points -= time_lims[0]  # adjust to start at 0
+        
+        if np.isnan(change_points).all():
+            print(f"Skipping {session_name} taste {row['taste_num']} due to all NaN change points")
+            continue
 
-# Convert to pandas DataFrame for easier handling
-state_snippet_df = pd.DataFrame(state_snippet_list)
+        taste_ind = row['taste_num']
+        # Shape: (trials, neurons, time)
+        spike_trains = spike_train_dict[session_name][int(taste_ind)]
+        # Cut to time_lims
+        spike_trains = spike_trains[:, :, time_lims[0]:time_lims[1]]
+        # get_state_snippets(spike_array, tau_array)
+        # Extract neural activity snippets for each state and trial without averaging
+        # 
+        # Returns raw neural activity for each state as a ragged array structure,
+        # where each state can have different durations across trials.
+        # 
+        # Args:
+        #     spike_array (np.ndarray): Neural activity data
+        #         Shape: (n_trials, n_neurons, n_bins)
+        #     tau_array (np.ndarray): Changepoint positions for each trial
+        #         Shape: (n_trials, n_changepoints)
+        # 
+        # Returns:
+        #     list: Nested list structure organized as [state][trial]
+        #         - Outer list length: n_states (n_changepoints + 1)
+        #         - Inner list length: n_trials
+        #         - Each element shape: (n_neurons, bins_in_state)
+        #         Note: bins_in_state varies by trial and state
+        state_snippets = get_state_snippets(spike_trains, change_points) 
+
+        # Add to dict individually for each neuron
+        for state_ind in range(len(state_snippets)):
+            for trial_ind in range(len(state_snippets[state_ind])):
+                for neuron_ind in range(spike_trains.shape[1]):
+                    state_snippet_list.append({
+                        'basename': session_name,
+                        'taste_num': taste_ind,
+                        'state_ind': state_ind,
+                        'trial_ind': trial_ind,
+                        'neuron_ind': neuron_ind,
+                        'spike_data': state_snippets[state_ind][trial_ind][neuron_ind]
+                    })
+
+    # Convert to pandas DataFrame for easier handling
+    state_snippet_df = pd.DataFrame(state_snippet_list)
+
+    ##############################
+    # For each trial, neuron, state: compute firing rates in first vs last half of state snippet
+    def mean_rate_halves(row):
+        spike_data = row['spike_data']
+        n_bins = len(spike_data)
+        if n_bins < 2:
+            return pd.Series({'mean_rate_first_half': np.nan, 'mean_rate_last_half': np.nan})
+        
+        half_point = n_bins // 2
+        first_half = spike_data[:half_point]
+        last_half = spike_data[half_point:]
+        
+        mean_rate_first_half = np.mean(first_half)
+        mean_rate_last_half = np.mean(last_half)
+        
+        # Add results to row
+        return pd.Series({'mean_rate_first_half': mean_rate_first_half, 'mean_rate_last_half': mean_rate_last_half})
+
+    state_snippet_df[['mean_rate_first_half', 'mean_rate_last_half']] = state_snippet_df.progress_apply(mean_rate_halves, axis=1)
+
+    # Write intermediate DataFrame to artifact
+    intermediate_artifact_path = os.path.join(artifacts_dir, 'state_snippet_frame.pkl')
+    state_snippet_df.to_pickle(intermediate_artifact_path)
 
 ##############################
-# For each trial, neuron, state: compute firing rates in first vs last half of state snippet
-def mean_rate_halves(row):
-    spike_data = row['spike_data']
-    n_bins = len(spike_data)
-    if n_bins < 2:
-        return pd.Series({'mean_rate_first_half': np.nan, 'mean_rate_last_half': np.nan})
-    
-    half_point = n_bins // 2
-    first_half = spike_data[:half_point]
-    last_half = spike_data[half_point:]
-    
-    mean_rate_first_half = np.mean(first_half)
-    mean_rate_last_half = np.mean(last_half)
-    
-    # Add results to row
-    return pd.Series({'mean_rate_first_half': mean_rate_first_half, 'mean_rate_last_half': mean_rate_last_half})
-
-state_snippet_df[['mean_rate_first_half', 'mean_rate_last_half']] = state_snippet_df.progress_apply(mean_rate_halves, axis=1)
-
-# Write intermediate DataFrame to artifact
-intermediate_artifact_path = os.path.join(artifacts_dir, 'state_snippet_frame.pkl')
-state_snippet_df.to_pickle(intermediate_artifact_path)
-
 # For each basenames, taste_num, state_ind, neuron_ind: perform paired t-test across trials
 def paired_t_test(group):
     # Drop NaN values
@@ -142,26 +149,27 @@ def paired_t_test(group):
 
     return pd.Series({'t_stat': t_stat, 'p_value': p_value, 'mean_rate': mean_rate})
 
-paired_test_results = \
-        state_snippet_df.groupby(['basename', 'taste_num', 'state_ind', 'neuron_ind']).progress_apply(paired_t_test).reset_index()
+if reload_data_bool:
+    paired_test_results = \
+            state_snippet_df.groupby(['basename', 'taste_num', 'state_ind', 'neuron_ind']).progress_apply(paired_t_test).reset_index()
 
-# Calculate number of repeated measures for each neuron (tastes and states)
-def count_repeated_measures(group):
-    return len(group)
-repeated_measures = \
-    paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(count_repeated_measures).reset_index(name='n_repeated_measures')
+    # Calculate number of repeated measures for each neuron (tastes and states)
+    def count_repeated_measures(group):
+        return len(group)
+    repeated_measures = \
+        paired_test_results.groupby(['basename', 'neuron_ind']).progress_apply(count_repeated_measures).reset_index(name='n_repeated_measures')
 
-# Merge so we can calculate corrected alpha
-paired_test_results = paired_test_results.merge(repeated_measures, on=['basename', 'neuron_ind'])
-# Bonferroni correction for multiple comparisons per neuron
-paired_test_results['corrected_alpha'] = 0.05 / paired_test_results['n_repeated_measures']
+    # Merge so we can calculate corrected alpha
+    paired_test_results = paired_test_results.merge(repeated_measures, on=['basename', 'neuron_ind'])
+    # Bonferroni correction for multiple comparisons per neuron
+    paired_test_results['corrected_alpha'] = 0.05 / paired_test_results['n_repeated_measures']
 
-# Convert mean_rate to Hz (current bins are 1ms)
-paired_test_results['mean_rate_Hz'] = paired_test_results['mean_rate'] * 1000
+    # Convert mean_rate to Hz (current bins are 1ms)
+    paired_test_results['mean_rate_Hz'] = paired_test_results['mean_rate'] * 1000
 
-# Save results as artifact
-paired_test_artifact_path = os.path.join(artifacts_dir, 'paired_test_results.pkl')
-paired_test_results.to_pickle(paired_test_artifact_path)
+    # Save results as artifact
+    paired_test_artifact_path = os.path.join(artifacts_dir, 'paired_test_results.pkl')
+    paired_test_results.to_pickle(paired_test_artifact_path)
 
 ############################################################
 # Make plots
@@ -220,7 +228,57 @@ venn_plot_path = os.path.join(plot_dir, 'single_neuron_analysis_venn.svg')
 plt.savefig(venn_plot_path, bbox_inches='tight')
 plt.close(fig)
 
-###############
+##############################
+# Bar plot for fold-changes before vs after state change for significant neurons
+significant_rows = paired_test_results[paired_test_results['sig']]
+
+significant_rows = significant_rows.merge(
+        state_snippet_df.groupby(['basename', 'neuron_ind', 'state_ind']).agg({
+            'mean_rate_first_half': 'mean',
+            'mean_rate_last_half': 'mean'
+        }).reset_index(),
+        on=['basename', 'neuron_ind', 'state_ind']
+        )
+
+significant_rows['fold_change'] = (significant_rows['mean_rate_last_half'] + 1e-6) / (significant_rows['mean_rate_first_half'] + 1e-6)
+
+# calculate log2 fold change for better visualization
+significant_rows['log2_fold_change'] = np.log2(significant_rows['fold_change'])
+# calculate -log10 p-value for better visualization
+significant_rows['neg_log10_p'] = -np.log10(significant_rows['p_value'] + 1e-10)  # add small value to avoid log(0)
+
+# Calculate count of significant changes for each absolute log2 fold change bin
+bins = np.arange(0, np.ceil(np.abs(significant_rows['log2_fold_change']).max()) + 1, 0.25)
+significant_rows['log2_fc_bin'] = pd.cut(significant_rows['log2_fold_change'].abs(), bins=bins)
+# Plot but formatted as an inset
+fig, ax = plt.subplots(figsize=(4, 4))
+bin_counts = significant_rows.groupby('log2_fc_bin').size()
+bin_centers = bins[:-1] + 0.25  # center of each bin
+ax.bar(bin_centers, bin_counts, width=0.25, edgecolor='black', histtype='step') 
+ax.set_xlabel('Absolute Log2 Fold Change (Last Half / First Half)')
+ax.set_ylabel('Count of Significant Changes')
+ax.set_title('Distribution of Fold Changes for Significant Neurons')
+bin_plot_path = os.path.join(plot_dir, 'significant_neurons_fold_change_distribution.svg')
+plt.savefig(bin_plot_path, bbox_inches='tight')
+plt.close(fig)
+
+# Plot volcano plot of fold changes
+fig, ax = plt.subplots(figsize=(4, 4))
+ax.scatter(significant_rows['log2_fold_change'], significant_rows['neg_log10_p'], alpha=0.7) 
+ax.set_xlabel('Log2 Fold Change (Last Half / First Half)')
+ax.set_ylabel('-log10(p-value)')
+ax.set_title('Fold Change vs Significance for Significant Neurons')
+# ax.set_ylim(0, significant_rows['neg_log10_p'].max() + 1)
+corrected_alpha = significant_rows['corrected_alpha'].iloc[0]  # same for all rows of a neuron, just take the first one
+ax.axhline(-np.log10(corrected_alpha), 
+           color='red', linestyle='--', label=f'Corrected Alpha ({corrected_alpha:.4f})')
+ax.legend()
+volcano_plot_path = os.path.join(plot_dir, 'significant_neurons_fold_change_volcano.svg')
+plt.savefig(volcano_plot_path, bbox_inches='tight')
+plt.close(fig)
+
+
+##############################
 # Plot traces of warped firing rates for significant neurons
 
 # For each neuron, plot both warped and unwarped firing rates for all states for a single taste
