@@ -289,6 +289,23 @@ volcano_plot_path = os.path.join(plot_dir, 'significant_neurons_fold_change_volc
 plt.savefig(volcano_plot_path, bbox_inches='tight')
 plt.close(fig)
 
+##############################
+# Distrubution of significance by state
+state_sig_counts = paired_test_results.groupby('state_ind')['sig'].sum().reset_index(name='n_significant_neurons')
+# Normalize by total number of neurons tested in each state
+state_sig_frac = state_sig_counts['frac_significant'] = state_sig_counts['n_significant_neurons'] / state_sig_counts['n_significant_neurons'].sum()
+fig, ax = plt.subplots(figsize=(2, 2))
+ax.bar(state_sig_counts['state_ind'], state_sig_frac, color='skyblue', edgecolor='black')
+ax.set_xlabel('State Index')
+ax.set_ylabel('Number of Significant Neurons')
+ax.set_title('Number of Neurons with Significant Change by State')
+ax.set_xticks(state_sig_counts['state_ind'])
+# Remove top and right spines for cleaner look
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+state_sig_plot_path = os.path.join(plot_dir, 'significant_frac_neurons_by_state.svg')
+plt.savefig(state_sig_plot_path, bbox_inches='tight')
+plt.close(fig)
 
 ##############################
 # Plot traces of warped firing rates for significant neurons
@@ -306,6 +323,8 @@ wanted_snippets = state_snippet_df.merge(
 )
 
 grouped_snippets = wanted_snippets.groupby(['basename', 'neuron_ind','taste_num'])
+
+
 
 this_plot_dir = os.path.join(plot_dir, 'rate_plots') 
 os.makedirs(this_plot_dir, exist_ok=True)
