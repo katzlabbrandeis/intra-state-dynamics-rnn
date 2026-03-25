@@ -249,15 +249,27 @@ significant_rows['neg_log10_p'] = -np.log10(significant_rows['p_value'] + 1e-10)
 
 # Calculate count of significant changes for each absolute log2 fold change bin
 bins = np.arange(0, np.ceil(np.abs(significant_rows['log2_fold_change']).max()) + 1, 0.25)
-significant_rows['log2_fc_bin'] = pd.cut(significant_rows['log2_fold_change'].abs(), bins=bins)
 # Plot but formatted as an inset
-fig, ax = plt.subplots(figsize=(4, 4))
-bin_counts = significant_rows.groupby('log2_fc_bin').size()
-bin_centers = bins[:-1] + 0.25  # center of each bin
-ax.bar(bin_centers, bin_counts, width=0.25, edgecolor='black', histtype='step') 
-ax.set_xlabel('Absolute Log2 Fold Change (Last Half / First Half)')
+fig, ax = plt.subplots(figsize=(2, 2))
+bin_counts, bin_edges = np.histogram(significant_rows['log2_fold_change'].abs(), bins=bins)
+mode_bin_indices = np.where(bin_counts == bin_counts.max())[0][0]
+mode_bin_values = (bin_edges[mode_bin_indices] + bin_edges[mode_bin_indices + 1]) / 2
+# ax.bar(bin_centers, bin_counts, width=0.25, edgecolor='black', histtype='step') 
+ax.hist(significant_rows['log2_fold_change'].abs(), bins=bins, edgecolor='black', histtype='stepfilled', alpha=0.7, linewidth=1.5)
+ax.set_xlabel('Absolute Log2 Fold Change\n(Last Half / First Half)')
 ax.set_ylabel('Count of Significant Changes')
 ax.set_title('Distribution of Fold Changes for Significant Neurons')
+# Remove top and right spines for cleaner look
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+# Set 0, 2, 4 as x-ticks for better readability
+ax.set_xticks([0, 2, 4])
+# Draw arrow pointing x-axis position of mode bin
+# Not text
+ax.annotate('',xy=(mode_bin_values, 0), 
+            xytext=(mode_bin_values, 5), 
+            arrowprops=dict(facecolor='black', shrink=0.02),
+            fontsize=8)
 bin_plot_path = os.path.join(plot_dir, 'significant_neurons_fold_change_distribution.svg')
 plt.savefig(bin_plot_path, bbox_inches='tight')
 plt.close(fig)
@@ -265,7 +277,7 @@ plt.close(fig)
 # Plot volcano plot of fold changes
 fig, ax = plt.subplots(figsize=(4, 4))
 ax.scatter(significant_rows['log2_fold_change'], significant_rows['neg_log10_p'], alpha=0.7) 
-ax.set_xlabel('Log2 Fold Change (Last Half / First Half)')
+ax.set_xlabel('Log2 Fold Change\n(Last Half / First Half)')
 ax.set_ylabel('-log10(p-value)')
 ax.set_title('Fold Change vs Significance for Significant Neurons')
 # ax.set_ylim(0, significant_rows['neg_log10_p'].max() + 1)
