@@ -18,6 +18,7 @@ from matplotlib_venn import venn3, venn3_circles, venn3_unweighted
 import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 from cloudpickle import dump, load
+from pprint import pprint as pp
 
 
 tqdm.pandas()
@@ -556,101 +557,303 @@ for group_ind, this_group in tqdm(significant_snippets_grouped):
 # 1) compare order of polynomial needed to fit actual vs shuffled rates (e.g. fit polynomials of increasing order and see which has best ELBO)
 # 2) compare ELBO of best polynomial fit to actual data, with ELBO for same order polynomial fit to shuffled data
 
-# Define models
-# 1- Flat mean
-with pm.Model() as mean_model:
-    intercept = pm.Normal('mean_rate', mu=0, sigma=10)
-    sigma = pm.Exponential('sigma', 1)
-    mean_rate = intercept
-    data = pm.Data('data', grand_mean_rate)
-    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
-
-# 2- Linear trend
-with pm.Model() as linear_model:
-    intercept = pm.Normal('intercept', mu=0, sigma=10)
-    slope = pm.Normal('slope', mu=0, sigma=10)
-    sigma = pm.Exponential('sigma', 1)
-    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
-    mean_rate = intercept + slope * x
-    data = pm.Data('data', grand_mean_rate)
-    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
-
-# with linear_model:
-#     fit = pm.fit(n=50000, method='advi', progressbar=True)
-#     trace = fit.sample(1000)
-# with linear_model:
-#     ppc_list = pm.sample_posterior_predictive(trace, model = linear_model)
+# # Define models
+# # 1- Flat mean
+# with pm.Model() as mean_model:
+#     intercept = pm.Normal('mean_rate', mu=0, sigma=10)
+#     sigma = pm.Exponential('sigma', 1)
+#     mean_rate = intercept
+#     data = pm.Data('data', grand_mean_rate)
+#     obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
 #
-# plt.plot(grand_mean_rate, color='black', linewidth=2, label='Grand Mean Rate', zorder = 10)
-# plt.plot(ppc_list.posterior_predictive.obs.values[0].T, color='red', alpha=0.1, label='Linear Model Posterior Predictive')
-# plt.show()
+# # 2- Linear trend
+# with pm.Model() as linear_model:
+#     intercept = pm.Normal('intercept', mu=0, sigma=10)
+#     slope = pm.Normal('slope', mu=0, sigma=10)
+#     sigma = pm.Exponential('sigma', 1)
+#     x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+#     mean_rate = intercept + slope * x
+#     data = pm.Data('data', grand_mean_rate)
+#     obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+#
+# # with linear_model:
+# #     fit = pm.fit(n=50000, method='advi', progressbar=True)
+# #     trace = fit.sample(1000)
+# # with linear_model:
+# #     ppc_list = pm.sample_posterior_predictive(trace, model = linear_model)
+# #
+# # plt.plot(grand_mean_rate, color='black', linewidth=2, label='Grand Mean Rate', zorder = 10)
+# # plt.plot(ppc_list.posterior_predictive.obs.values[0].T, color='red', alpha=0.1, label='Linear Model Posterior Predictive')
+# # plt.show()
+#
+# # 3- Quadratic trend
+# with pm.Model() as quadratic_model:
+#     intercept = pm.Normal('intercept', mu=0, sigma=10)
+#     linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
+#     quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
+#     sigma = pm.Exponential('sigma', 1)
+#     x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+#     mean_rate = intercept + linear_coeff * x + quad_coeff * x**2
+#     data = pm.Data('data', grand_mean_rate)
+#     obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+#
+# # 4- Cubic trend
+# with pm.Model() as cubic_model:
+#     intercept = pm.Normal('intercept', mu=0, sigma=10)
+#     linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
+#     quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
+#     cubic_coeff = pm.Normal('cubic_coeff', mu=0, sigma=10)
+#     sigma = pm.Exponential('sigma', 1)
+#     x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+#     mean_rate = intercept + linear_coeff * x + quad_coeff * x**2 + cubic_coeff * x**3
+#     data = pm.Data('data', grand_mean_rate)
+#     obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+#
+# def fit_model(model, ts):
+#     try:
+#         with model:
+#             pm.set_data({'data': ts})
+#             fit = pm.fit(n=50000, method='advi', progressbar=True)
+#             trace = fit.sample(1000)
+#             elbo = fit.hist[-1]
+#     except Exception as e:
+#         print(f"Error fitting model: {e}")
+#         fit = None
+#         trace = None
+#         elbo = np.nan
+#     return fit, trace, elbo
+#
+# def fit_and_compare_models(ts):
+#     # Fit all models
+#     _, _, mean_elbo = fit_model(mean_model, ts)
+#     _, _, linear_elbo = fit_model(linear_model, ts)
+#     _, _, quad_elbo = fit_model(quadratic_model, ts)
+#     _, _, cubic_elbo = fit_model(cubic_model, ts)
+#
+#     # Compare ELBOs
+#     elbos = {
+#         'mean': mean_elbo,
+#         'linear': linear_elbo,
+#         'quadratic': quad_elbo,
+#         'cubic': cubic_elbo
+#         }
+#     return elbos
+#
+# # Trim edges of mean rates to avoid warping artifacts
+# elbos_list = []
+# for ind, row in tqdm(all_rates_df.iterrows()):
+#     ts = row['mean_rates'][1:-1]  # trim first and last bin
+#     # all_rates_df.at[ind, 'trimmed_rates'] = ts[1:-1]
+#     elbos = fit_and_compare_models(ts)
+#     out_dict = {
+#         'group_name': row['group_name'],
+#         'type': row['type'],
+#         'elbos': elbos
+#         }
+#     elbos_list.append(out_dict)
 
-# 3- Quadratic trend
-with pm.Model() as quadratic_model:
-    intercept = pm.Normal('intercept', mu=0, sigma=10)
-    linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
-    quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
-    sigma = pm.Exponential('sigma', 1)
-    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
-    mean_rate = intercept + linear_coeff * x + quad_coeff * x**2
-    data = pm.Data('data', grand_mean_rate)
-    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+##############################
+# Bayesian fits are taking too long.
+# Can try with frequentist polynomial fits and compare R^2 or AIC/BIC for actual vs shuffled rates
+# REF: https://scikit-learn.org/stable/auto_examples/model_selection/plot_underfitting_overfitting.html
 
-# 4- Cubic trend
-with pm.Model() as cubic_model:
-    intercept = pm.Normal('intercept', mu=0, sigma=10)
-    linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
-    quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
-    cubic_coeff = pm.Normal('cubic_coeff', mu=0, sigma=10)
-    sigma = pm.Exponential('sigma', 1)
-    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
-    mean_rate = intercept + linear_coeff * x + quad_coeff * x**2 + cubic_coeff * x**3
-    data = pm.Data('data', grand_mean_rate)
-    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
 
-def fit_model(model, ts):
-    try:
-        with model:
-            pm.set_data({'data': ts})
-            fit = pm.fit(n=50000, method='advi', progressbar=True)
-            trace = fit.sample(1000)
-            elbo = fit.hist[-1]
-    except Exception as e:
-        print(f"Error fitting model: {e}")
-        fit = None
-        trace = None
-        elbo = np.nan
-    return fit, trace, elbo
 
-def fit_and_compare_models(ts):
-    # Fit all models
-    _, _, mean_elbo = fit_model(mean_model, ts)
-    _, _, linear_elbo = fit_model(linear_model, ts)
-    _, _, quad_elbo = fit_model(quadratic_model, ts)
-    _, _, cubic_elbo = fit_model(cubic_model, ts)
+n_samples = len(grand_mean_rate) - 2  # trim edges to avoid warping artifacts
+degrees = np.arange(0, 5)  # test polynomial degrees from 0 (flat) to 4 
 
-    # Compare ELBOs
-    elbos = {
-        'mean': mean_elbo,
-        'linear': linear_elbo,
-        'quadratic': quad_elbo,
-        'cubic': cubic_elbo
-        }
-    return elbos
+X = np.arange(n_samples) 
+y = grand_mean_rate[1:-1].copy()  # trim edges to avoid warping artifacts 
+# y = np.random.rand(n_samples)  # placeholder, will replace with actual rates in loop below
 
-# Trim edges of mean rates to avoid warping artifacts
-elbos_list = []
+plt.figure(figsize=(5, 5))
+score_dict = dict()
+for i in range(len(degrees)):
+    ax = plt.subplot(len(degrees), 1, i + 1)
+    plt.setp(ax, xticks=(), yticks=())
+
+    if degrees[i] == 0:
+        polynomial_features = PolynomialFeatures(degree=0, include_bias=True)  
+    else:
+        polynomial_features = PolynomialFeatures(degree=degrees[i], include_bias=False)
+    linear_regression = LinearRegression()
+    pipeline = Pipeline(
+        [
+            ("polynomial_features", polynomial_features),
+            ("linear_regression", linear_regression),
+        ]
+    )
+    pipeline.fit(X[:, np.newaxis], y)
+
+    # Evaluate the models using crossvalidation
+    scores = cross_val_score(
+        pipeline, X[:, np.newaxis], y, scoring="neg_mean_squared_error", cv=5
+    )
+
+    score_dict[degrees[i]] = -scores.mean()
+
+    plt.plot(X[:, np.newaxis], pipeline.predict(X[:, np.newaxis]), label="Model")
+    plt.plot(X, y, label="True function")
+    plt.scatter(X, y, edgecolor="b", s=20, label="Samples")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.legend(loc="best")
+    plt.title(
+        "Degree {}\nMSE = {:.2e}(+/- {:.2e})".format(
+            degrees[i], -scores.mean(), scores.std()
+        )
+    )
+plt.show()
+
+# Calculate inverse score-weighted average (higher score means worse fit, so we want to weight by inverse of score)
+best_order = min(score_dict, key=score_dict.get)
+# scores = np.array(list(score_dict.values()))
+# inverse_scores = 1 / scores
+# weighted_average = np.sum(scores * degrees) / np.sum(scores)
+
+def calc_cross_val_scores(ts, degrees=np.arange(0, 5)):
+    X = np.arange(len(ts))
+    y = ts.copy()
+
+    score_dict = dict()
+    for degree in degrees:
+        if degree == 0:
+            polynomial_features = PolynomialFeatures(degree=0, include_bias=True)  
+        else:
+            polynomial_features = PolynomialFeatures(degree=degree, include_bias=False)
+        linear_regression = LinearRegression()
+        pipeline = Pipeline(
+            [
+                ("polynomial_features", polynomial_features),
+                ("linear_regression", linear_regression),
+            ]
+        )
+        pipeline.fit(X[:, np.newaxis], y)
+
+        # Evaluate the models using crossvalidation
+        scores = cross_val_score(
+            pipeline, X[:, np.newaxis], y, scoring="neg_mean_squared_error", cv=5
+        )
+
+        score_dict[degree] = -scores.mean()
+    return score_dict
+
+all_scores = []
 for ind, row in tqdm(all_rates_df.iterrows()):
     ts = row['mean_rates'][1:-1]  # trim first and last bin
-    # all_rates_df.at[ind, 'trimmed_rates'] = ts[1:-1]
-    elbos = fit_and_compare_models(ts)
+    scores = calc_cross_val_scores(ts)
+    best_order = min(scores, key=scores.get)
+    # all_rates_df.at[ind, 'cross_val_scores'] = scores
     out_dict = {
         'group_name': row['group_name'],
         'type': row['type'],
-        'elbos': elbos
+        'cross_val_scores': scores,
+        'best_order': best_order
         }
-    elbos_list.append(out_dict)
+    all_scores.append(out_dict)
 
+all_scores_df = pd.DataFrame(all_scores).dropna()
+
+all_agg_scores_list = []
+grouped_scores = all_scores_df.groupby('group_name')
+for ind, this_group in tqdm(grouped_scores):
+    actual_rows = this_group[this_group['type'] == 'actual']
+    actual_best_order = actual_rows['best_order'].iloc[0]  # should only be one row per group with actual data
+    shuffled_rows = this_group[this_group['type'] == 'shuffled']
+    mean_best_order_shuffled = shuffled_rows['best_order'].mean()
+    std_best_order_shuffled = shuffled_rows['best_order'].std()
+    out_dict = {
+            'group_name': ind,
+            'actual_best_order': actual_best_order,
+            'mean_best_order_shuffled': mean_best_order_shuffled,
+            'std_best_order_shuffled': std_best_order_shuffled
+            }
+    all_agg_scores_list.append(out_dict)
+
+# Make scatter plot of actual best order vs mean shuffled best order with error bars for std
+agg_scores_df = pd.DataFrame(all_agg_scores_list)
+
+fig, ax = plt.subplots(2,2, figsize=(6, 6))#, sharex='col', sharey='row')
+bins = np.arange(-0.5, 5.5, 1)
+# Add jitter to actual best order for better visualization
+actual_orders = agg_scores_df['actual_best_order'] 
+actual_orders_jittered = actual_orders + np.random.uniform(-0.2, 0.2, size=len(actual_orders))
+# ax[1,0].errorbar(agg_scores_df['mean_best_order_shuffled'], actual_orders_jittered, 
+#             xerr=agg_scores_df['std_best_order_shuffled'], fmt='o', ecolor='lightgray', elinewidth=3, capsize=0)
+ax[1,0].scatter(agg_scores_df['mean_best_order_shuffled'], actual_orders_jittered, color='white', label='Groups',
+                edgecolor='black') 
+ax[1,0].plot([0, 4], [0, 4], color='red', linestyle='--')  # line for reference
+ax[1,0].set_xlabel('Shuffled Best Order (Mean ± Std)')
+ax[1,0].set_ylabel('Actual Best Order')
+ax[1,0].set_title('Actual vs Shuffled Orders')
+# Plot marginal histograms of best orders for actual and shuffled
+ax[1,1].hist(agg_scores_df['actual_best_order'], bins=bins, edgecolor='black',
+             density=True, orientation='horizontal', linewidth=1.5, color='white')
+ax[1,1].set_title('Best Actual Orders')
+ax[1,1].set_xlabel('Density')
+ax[0,0].hist(agg_scores_df['mean_best_order_shuffled'], bins=bins, edgecolor='black',
+             orientation='vertical', density=True, linewidth=1.5, color='white')
+ax[0,0].set_ylabel('Density')
+ax[0,0].set_title('Best Shuffled Orders')
+# Plot overlay of histograms for actual vs shuffled best orders
+# Unshare axes to allow different x and y limits
+# ax[0,1].get_shared_x_axes().remove(ax[0,1])
+# ax[0,1].get_shared_y_axes().remove(ax[0,1])
+ax[0,1].hist(agg_scores_df['actual_best_order'], bins=bins, edgecolor='black', alpha=0.5, label='Actual', density=True)
+ax[0,1].hist(agg_scores_df['mean_best_order_shuffled'], bins=bins, edgecolor='black', alpha=0.5, label='Shuffled', density=True)
+ax[0,1].set_title('Best Orders: Actual vs Shuffled')
+ax[0,1].set_xlabel('Best Polynomial Fit Order')
+ax[0,1].set_ylabel('Density')
+ax[0,1].legend()
+# Remvoe top and right spines for cleaner look
+for this_ax in ax.flatten():
+    this_ax.spines['top'].set_visible(False)
+    this_ax.spines['right'].set_visible(False)
+# Add shared axes as relevant
+ax[0,0].sharex(ax[0,1])
+ax[1,0].sharex(ax[0,0])
+ax[1,1].sharey(ax[1,0])
+fig.suptitle('Comparison of Best Polynomial Fit Orders for Actual vs Shuffled Rates')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'actual_vs_shuffled_best_orders_comparison.svg'), bbox_inches='tight')
+plt.close(fig)
+# plt.show()
+
+###############
+# for ind, row in tqdm(all_rates_df.iterrows()):
+#     ts = row['mean_rates'][1:-1]  # trim first and last bin
+#     x = np.arange(len(ts))
+#
+#     # # Fit mean model
+#     # mean_rate = np.mean(ts)
+#     # mean_residuals = ts - mean_rate
+#     # mean_r2 = 1 - np.sum(mean_residuals**2) / np.sum((ts - np.mean(ts))**2)
+#
+#     # Fit linear model
+#     linear_coeffs = np.polyfit(x, ts, deg=1)
+#     linear_fit = np.polyval(linear_coeffs, x)
+#     linear_residuals = ts - linear_fit
+#     linear_r2 = 1 - np.sum(linear_residuals**2) / np.sum((ts - np.mean(ts))**2)
+#
+#     # Fit quadratic model
+#     quad_coeffs = np.polyfit(x, ts, deg=2)
+#     quad_fit = np.polyval(quad_coeffs, x)
+#     quad_residuals = ts - quad_fit
+#     quad_r2 = 1 - np.sum(quad_residuals**2) / np.sum((ts - np.mean(ts))**2)
+#
+#     # Fit cubic model
+#     cubic_coeffs = np.polyfit(x, ts, deg=3)
+#     cubic_fit = np.polyval(cubic_coeffs, x)
+#     cubic_residuals = ts - cubic_fit
+#     cubic_r2 = 1 - np.sum(cubic_residuals**2) / np.sum((ts - np.mean(ts))**2)
+#
+#     all_rates_df.at[ind, 'linear_r2'] = linear_r2
+#     all_rates_df.at[ind, 'quad_r2'] = quad_r2
+#     all_rates_df.at[ind, 'cubic_r2'] = cubic_r2
 
 ##############################
 # Calculate bits-per-spike for each grand_mean_rate
