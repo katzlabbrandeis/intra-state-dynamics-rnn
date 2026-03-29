@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from scipy.signal import savgol_filter
 from cloudpickle import dump, load
 from pprint import pprint as pp
-
+import seaborn as sns
 
 tqdm.pandas()
 
@@ -743,7 +743,7 @@ def calc_cross_val_scores(ts, degrees=np.arange(0, 5)):
     return score_dict
 
 all_scores = []
-for ind, row in tqdm(all_rates_df.iterrows()):
+for ind, row in tqdm(all_rates_df.iterrows(), total=len(all_rates_df)):
     ts = row['mean_rates'][1:-1]  # trim first and last bin
     scores = calc_cross_val_scores(ts)
     best_order = min(scores, key=scores.get)
@@ -752,11 +752,14 @@ for ind, row in tqdm(all_rates_df.iterrows()):
         'group_name': row['group_name'],
         'type': row['type'],
         'cross_val_scores': scores,
-        'best_order': best_order
+        'best_order': best_order,
+        'shuff_inds': row.get('shuff_inds', np.nan)  # only exists for shuffled rows
         }
     all_scores.append(out_dict)
 
-all_scores_df = pd.DataFrame(all_scores).dropna()
+all_scores_df = pd.DataFrame(all_scores)
+# Fill in shuff_inds for actual rows with NaN to allow grouping
+all_scores_df['shuff_inds'].fillna(-1, inplace=True)  # fill NaN with -1 for actual rows
 
 all_agg_scores_list = []
 grouped_scores = all_scores_df.groupby('group_name')
@@ -822,6 +825,72 @@ plt.tight_layout()
 fig.savefig(os.path.join(plot_dir, 'actual_vs_shuffled_best_orders_comparison.svg'), bbox_inches='tight')
 plt.close(fig)
 # plt.show()
+
+# For all fits with best linear, calculate significance of linear regression
+all_scores_df['best_order_int'] = all_scores_df['best_order'].astype(int)
+significant_linear_df = all_scores_df[(all_scores_df['best_order_int'] == 1)]
+# Fill in shuff_inds for both significant_linear_df and all_rates_df for merging 
+all_rates_df['shuff_inds'].fillna(-1, inplace=True)  # fill NaN with -1 for actual rows
+
+# Merge with all_rates_df to get mean rates for significant linear fits
+significant_linear_df = significant_linear_df.merge(
+    all_rates_df[['group_name', 'mean_rates', 'shuff_inds']],
+    on=['group_name', 'shuff_inds'],
+    how='left'
+    )
+
+# Perform linear regression using scipy.stats.linregress and calculate p-value for slope being different from 0
+from scipy.stats import linregress
+significant_linear_df['slope'] = np.nan
+significant_linear_df['intercept'] = np.nan
+significant_linear_df['r_value'] = np.nan
+significant_linear_df['p_value'] = np.nan
+for ind, row in tqdm(significant_linear_df.iterrows(), total=len(significant_linear_df)):
+    ts = row['mean_rates'][1:-1]  # trim first and last bin
+    # zscore
+    ts = (ts - np.mean(ts)) / np.std(ts)
+    x = np.arange(len(ts))
+    slope, intercept, r_value, p_value, std_err = linregress(x, ts)
+    significant_linear_df.at[ind, 'slope'] = slope
+    significant_linear_df.at[ind, 'intercept'] = intercept
+    significant_linear_df.at[ind, 'r_value'] = r_value
+    significant_linear_df.at[ind, 'p_value'] = p_value
+
+# Plot stats for each type
+stat_types = ['slope', 'intercept', 'p_value']
+fig, ax = plt.subplots(1,3, figsize=(9, 3))
+for stat, this_ax in zip(stat_types, ax.flatten()):
+    actual_values = significant_linear_df[significant_linear_df['type'] == 'actual'][stat]
+    shuffled_values = significant_linear_df[significant_linear_df['type'] == 'shuffled'][stat]
+    # Make everything absolute
+    if stat in ['slope', 'intercept']:
+        actual_values = actual_values.abs()
+        shuffled_values = shuffled_values.abs()
+        stat_name = f'Absolute {stat.capitalize()}'
+    else:
+        stat_name = stat.capitalize()
+    if stat == 'p_value':
+        # Plot -log10 of p-values for better visualization
+        actual_values = -np.log10(actual_values)
+        shuffled_values = -np.log10(shuffled_values)
+        stat_name = '-log10(p-value)'
+    bins = np.histogram_bin_edges(np.concatenate([actual_values, shuffled_values]), bins=10)
+    this_ax.hist(actual_values, bins=bins, alpha=0.75, label='Actual', density=True,
+                 histtype='step', linewidth=3)
+    this_ax.hist(shuffled_values, bins=bins, alpha=0.75, label='Shuffled', density=True,
+                 histtype='step', linewidth=3)
+    this_ax.set_title(stat_name)
+    this_ax.set_xlabel('--> Larger better')
+    this_ax.set_ylabel('Density')
+    # Remoev top and right spines for cleaner look
+    this_ax.spines['top'].set_visible(False)
+    this_ax.spines['right'].set_visible(False)
+this_ax.legend()
+fig.suptitle('Comparison of Linear Fit Statistics for Actual vs Shuffled Rates\n(Only Groups with Best Linear Fit)')
+plt.tight_layout()
+fig.savefig(os.path.join(plot_dir, 'significant_linear_fit_stats_comparison.svg'), bbox_inches='tight')
+plt.close(fig)
+
 
 ###############
 # for ind, row in tqdm(all_rates_df.iterrows()):
