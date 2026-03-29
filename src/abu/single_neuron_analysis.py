@@ -459,8 +459,10 @@ for group_ind, this_group in tqdm(significant_snippets_grouped):
     for i in range(n_shuffles):
 
         shuffled_array = np.copy(warped_array)
-        for i in range(shuffled_array.shape[0]):
-            np.random.shuffle(shuffled_array[i])
+        # for i in range(shuffled_array.shape[0]):
+        #     np.random.shuffle(shuffled_array[i])
+        # Shuffle all trials together
+        shuffled_array = np.random.permutation(shuffled_array.T).T
 
         # fig, ax = plt.subplots(1,2,figsize=(4, 2), sharey=True)
         # ax[0].imshow(warped_array, aspect='auto', cmap='Greys', origin='lower')
@@ -485,8 +487,16 @@ for group_ind, this_group in tqdm(significant_snippets_grouped):
     with open(shuffle_artifact_path, 'wb') as f:
         dump(shuffle_list, f)
 
+shuffled_df = pd.DataFrame({
+    'group_name': list(all_shuffled_rates.keys()),
+    'mean_rates': [np.mean(shuffle_list, axis=(0)) for shuffle_list in all_shuffled_rates.values()], 
+    'type': 'shuffled'
+    })
+# Explode shuffled rates into separate rows for easier handling
+shuffled_df['shuff_inds'] = [list(range(len(shuffle_list))) for shuffle_list in shuffled_df['mean_rates']]
+shuffled_df = shuffled_df.explode(['mean_rates', 'shuff_inds']).reset_index(drop=True)
 
-# Calculate bits-per-spike for each grand_mean_rate
+# Calculate grand mean rates for all groups to compare to shuffle
 all_grand_mean_rates = dict()
 for group_ind, this_group in tqdm(significant_snippets_grouped):
     group_name_str = "_".join([str(x) for x in group_ind])
@@ -499,6 +509,151 @@ for group_ind, this_group in tqdm(significant_snippets_grouped):
     grand_mean_rate = mean_ppc.mean(axis=0)
     all_grand_mean_rates[group_name_str] = grand_mean_rate
 
+actual_df = pd.DataFrame({
+    'group_name': list(all_grand_mean_rates.keys()),
+    'mean_rates': list(all_grand_mean_rates.values()),
+    'type': 'actual'
+    })
+
+all_rates_df = pd.concat([actual_df, shuffled_df], ignore_index=True)
+
+###############
+# Compare actual from shuffle
+this_plot_dir = os.path.join(plot_dir, 'shuffle_comparison')
+os.makedirs(this_plot_dir, exist_ok=True)
+
+for group_ind, this_group in tqdm(significant_snippets_grouped):
+    group_name_str = "_".join([str(x) for x in group_ind])
+    grand_mean_rate = all_grand_mean_rates[group_name_str]
+    shuffle_list = np.array(all_shuffled_rates[group_name_str])
+    # grand_mean_shuffle_rate = np.mean(shuffle_list, axis=(0,1))
+    # grand_mean_shuffle_std = np.std(shuffle_list, axis=(0,1))
+
+    fig, ax = plt.subplots(figsize=(4, 4))
+    for i, shuffle_rate in enumerate(shuffle_list):
+        if i == 0:
+            label = 'Mean Shuffled Rates'
+        else:
+            label = None
+        ax.plot(shuffle_rate.mean(axis=0)[1:-1], color='red', alpha=0.5, label=label)
+    ax.plot(grand_mean_rate[1:-1], color='black', linewidth=2, label='Grand Mean Rate')
+    # ax.plot(grand_mean_shuffle_rate, color='blue', linewidth=2, label='Grand Mean Shuffled Rate')
+    # ax.fill_between(range(len(grand_mean_shuffle_rate)),
+    #                 grand_mean_shuffle_rate - grand_mean_shuffle_std,
+    #                 grand_mean_shuffle_rate + grand_mean_shuffle_std,
+    #                 color='blue', alpha=0.2, label='Shuffled Std Dev')
+    ax.set_xlabel('Warped Time Bins')
+    ax.set_title(f'{group_name_str} Inferred Firing Rate vs Shuffled\nEdges Trimmed to Avoid Artifacts')
+    ax.legend()
+    plt.tight_layout()
+    # plt.show()
+    fig.savefig(os.path.join(this_plot_dir, f'{group_name_str}_shuffled_comparison.svg'), bbox_inches='tight')
+    plt.close(fig)
+
+##############################
+# A potential way to test for structure would be to compare needing higher order polynomials to fit the actual vs shuffled rates
+# We can try to use the ELBO to compare model fits in 2 ways:
+# 1) compare order of polynomial needed to fit actual vs shuffled rates (e.g. fit polynomials of increasing order and see which has best ELBO)
+# 2) compare ELBO of best polynomial fit to actual data, with ELBO for same order polynomial fit to shuffled data
+
+# Define models
+# 1- Flat mean
+with pm.Model() as mean_model:
+    intercept = pm.Normal('mean_rate', mu=0, sigma=10)
+    sigma = pm.Exponential('sigma', 1)
+    mean_rate = intercept
+    data = pm.Data('data', grand_mean_rate)
+    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+
+# 2- Linear trend
+with pm.Model() as linear_model:
+    intercept = pm.Normal('intercept', mu=0, sigma=10)
+    slope = pm.Normal('slope', mu=0, sigma=10)
+    sigma = pm.Exponential('sigma', 1)
+    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+    mean_rate = intercept + slope * x
+    data = pm.Data('data', grand_mean_rate)
+    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+
+# with linear_model:
+#     fit = pm.fit(n=50000, method='advi', progressbar=True)
+#     trace = fit.sample(1000)
+# with linear_model:
+#     ppc_list = pm.sample_posterior_predictive(trace, model = linear_model)
+#
+# plt.plot(grand_mean_rate, color='black', linewidth=2, label='Grand Mean Rate', zorder = 10)
+# plt.plot(ppc_list.posterior_predictive.obs.values[0].T, color='red', alpha=0.1, label='Linear Model Posterior Predictive')
+# plt.show()
+
+# 3- Quadratic trend
+with pm.Model() as quadratic_model:
+    intercept = pm.Normal('intercept', mu=0, sigma=10)
+    linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
+    quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
+    sigma = pm.Exponential('sigma', 1)
+    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+    mean_rate = intercept + linear_coeff * x + quad_coeff * x**2
+    data = pm.Data('data', grand_mean_rate)
+    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+
+# 4- Cubic trend
+with pm.Model() as cubic_model:
+    intercept = pm.Normal('intercept', mu=0, sigma=10)
+    linear_coeff = pm.Normal('linear_coeff', mu=0, sigma=10)
+    quad_coeff = pm.Normal('quad_coeff', mu=0, sigma=10)
+    cubic_coeff = pm.Normal('cubic_coeff', mu=0, sigma=10)
+    sigma = pm.Exponential('sigma', 1)
+    x = np.arange(len(grand_mean_rate)-2) # trim edges to avoid warping artifacts
+    mean_rate = intercept + linear_coeff * x + quad_coeff * x**2 + cubic_coeff * x**3
+    data = pm.Data('data', grand_mean_rate)
+    obs = pm.Normal('obs', mu=mean_rate, sigma=sigma, observed=data)
+
+def fit_model(model, ts):
+    try:
+        with model:
+            pm.set_data({'data': ts})
+            fit = pm.fit(n=50000, method='advi', progressbar=True)
+            trace = fit.sample(1000)
+            elbo = fit.hist[-1]
+    except Exception as e:
+        print(f"Error fitting model: {e}")
+        fit = None
+        trace = None
+        elbo = np.nan
+    return fit, trace, elbo
+
+def fit_and_compare_models(ts):
+    # Fit all models
+    _, _, mean_elbo = fit_model(mean_model, ts)
+    _, _, linear_elbo = fit_model(linear_model, ts)
+    _, _, quad_elbo = fit_model(quadratic_model, ts)
+    _, _, cubic_elbo = fit_model(cubic_model, ts)
+
+    # Compare ELBOs
+    elbos = {
+        'mean': mean_elbo,
+        'linear': linear_elbo,
+        'quadratic': quad_elbo,
+        'cubic': cubic_elbo
+        }
+    return elbos
+
+# Trim edges of mean rates to avoid warping artifacts
+elbos_list = []
+for ind, row in tqdm(all_rates_df.iterrows()):
+    ts = row['mean_rates'][1:-1]  # trim first and last bin
+    # all_rates_df.at[ind, 'trimmed_rates'] = ts[1:-1]
+    elbos = fit_and_compare_models(ts)
+    out_dict = {
+        'group_name': row['group_name'],
+        'type': row['type'],
+        'elbos': elbos
+        }
+    elbos_list.append(out_dict)
+
+
+##############################
+# Calculate bits-per-spike for each grand_mean_rate
 def calc_flat_deviation(ts, n_shuffles = 10_000):
     """
     Calculates deviation of time-seroes from unformity
