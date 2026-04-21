@@ -117,6 +117,258 @@ Currently working on understanding their importance. See `/src/core/utils/find_e
 
 ---
 
+## AI-suggested RNN latent extraction protocol
+
+### Overview
+This protocol extracts RNN latent representations from parquet files containing timestep data, applies PCA transformations, computes derivatives, and optionally time-warps the results. The main class is `RNNLatentProcessor` in `/src/core/pre_processing/RNNLatentprocessing.py`.
+
+### Prerequisites
+
+**Required inputs:**
+1. **Parquet directory** - Contains per-timestep parquet files with either:
+   - Latent columns: `latent_dim_1`, `latent_dim_2`, ...
+   - Neuron columns: `neuron_1`, `neuron_2`, ...
+   - Plus metadata: `taste`, `trial`, `time`
+
+2. **NPZ path** - `.npz` archives with spike arrays (for changepoint extraction)
+   - Location: `/output/intermediate_data/spike_trains_npz`
+   - Generate via: `spike_train_to_npz()` in `/src/core/utils/spike_train_to_npz.py`
+
+3. **Info path** - Directory with `.info` metadata files mapping datasets to tastes
+   - Generate via: `find_copy_h5info()` in `/src/core/utils/find_extract_info.py`
+
+4. **PKL path** - Pickled changepoint outputs per dataset
+   - Available in: `RNN_PROCESSING_PARQUETS`, `PRED_FR_RNN`, `FR_PROCESSING_PARQUETS`, or `PKL_CACHE`
+   - All contain identical changepoint data
+
+### Step-by-Step Protocol
+
+#### 1. Configure paths using roots.json
+
+```python
+from pathlib import Path
+from core.config.roots_io import resolve_roots, update_roots
+from core.io.import_paths import find_repo_root
+
+# Find repository root
+repo_root = find_repo_root()
+
+# Option A: Update stored roots (persists for future runs)
+update_roots(
+    repo_root,
+    h5_root="/path/to/h5_files",
+    pkl_root="/path/to/pkl_cache",
+    latent_parquet_root="/path/to/RNN_PROCESSING_PARQUETS",
+    rnn_pred_fr_parquet_root="/path/to/PRED_FR_RNN"  # optional
+)
+
+# Option B: Resolve roots with CLI overrides (temporary)
+roots = resolve_roots(
+    repo_root,
+    cli_rnn_latent_root="/path/to/RNN_PROCESSING_PARQUETS",
+    cli_pkl_root="/path/to/pkl_cache",
+    require_h5=False,
+    require_rnn_latent=True
+)
+```
+
+#### 2. Initialize RNNLatentProcessor
+
+```python
+from core.pre_processing.RNNLatentprocessing import RNNLatentProcessor
+
+# Define taste name replacements (optional)
+taste_replacements = {
+    "nacl": "NaCl",
+    "suc": "Sucrose", 
+    "ca": "Citric Acid",
+    "qhcl": "Quinine"
+}
+
+# Initialize processor
+processor = RNNLatentProcessor(
+    parquet_dir=roots.latent_parquet_root,  # or specific subdirectory
+    npz_path="/path/to/spike_trains_npz",
+    info_path="/path/to/info_files",
+    pkl_path=roots.pkl_root / "changepoints",  # or specific pkl directory
+    taste_replacements=taste_replacements,
+    bin_size_ms=25,           # Standard bin size
+    start_time_ms=1500,       # 500ms pre-stim (stim at 2000ms)
+    max_time_ms=4500,         # Max training duration
+    save_dir="/path/to/output",  # Where to save results
+    warp_length=1000,         # Fixed warp duration in ms (None to disable)
+    variance_threshold=95.0   # PCA cumulative variance %
+)
+```
+
+#### 3. Run the full pipeline
+
+```python
+# Execute complete analysis
+(
+    epochs_unw,           # Raw epoch dataframes (unwarped)
+    pca_thresh_unw,       # PCA at variance threshold (unwarped)
+    pca_full_unw,         # PCA full variance (unwarped)
+    fd_unw,               # First derivatives (unwarped)
+    sd_unw,               # Second derivatives (unwarped)
+    epochs_w,             # Raw epoch dataframes (warped)
+    pca_thresh_w,         # PCA at variance threshold (warped)
+    pca_full_w,           # PCA full variance (warped)
+    fd_w,                 # First derivatives (warped)
+    sd_w                  # Second derivatives (warped)
+) = processor.full_pipeline(
+    compute_first_derivative=True,
+    compute_second_derivative=False,
+    derivative_source="threshold",  # "threshold" or "full"
+    return_derivatives=True,
+    save_outputs=True,
+    compute_ttest=True  # Mann-Whitney U half-split test
+)
+```
+
+#### 4. Access specific outputs
+
+```python
+# Access unwarped PCA results (recommended for latents)
+pca_95_unwarped = processor.robust_pca_95_unwarped
+
+# Access warped results
+pca_95_warped = processor.robust_pca_95_warped
+
+# Access changepoints
+changepoints = processor.changepoints_dict
+
+# Access t-test results (MWU half-split)
+ttest_raw = processor.ttest_raw_output_unwarped
+ttest_pca = processor.ttest_robust_pca_95_unwarped
+```
+
+#### 5. Read saved parquet outputs
+
+```python
+from core.utils.read_parquets import read_parquet_files_into_dict, all_nrns_to_df
+import polars as pl
+
+# Option A: Read all parquets into one DataFrame
+output_dir = Path("/path/to/output/robust_pca_95_unwarped")
+mega_df = all_nrns_to_df(output_dir)
+
+# Option B: Read into dictionary keyed by filename
+parquet_dict = read_parquet_files_into_dict(output_dir)
+
+# Explore schema and data
+for name, df in parquet_dict.items():
+    print(f"\n{name}:")
+    print(df.schema)
+    print(f"Unique tastes: {df['taste'].unique()}")
+    print(f"Unique trials: {df['trial'].unique()}")
+    
+# Filter and analyze
+filtered = df.filter(
+    (pl.col('taste') == 0) & 
+    (pl.col('changepoint') == 1)
+)
+```
+
+### Output Directory Structure
+
+When `save_outputs=True`, results are organized as:
+
+```
+<save_dir>/
+├── raw_output_unwarped/
+│   └── <dataset>_<type>_raw_output_unwarped.parquet
+├── raw_output_warped/
+│   └── <dataset>_<type>_raw_output_warped.parquet
+├── robust_pca_95_unwarped/  ⭐ PRIMARY OUTPUT FOR LATENTS
+│   └── <dataset>_<type>_robust_pca_95_unwarped.parquet
+├── robust_pca_95_warped/
+│   └── <dataset>_<type>_robust_pca_95_warped.parquet
+├── robust_pca_full_unwarped/
+│   └── <dataset>_<type>_robust_pca_full_unwarped.parquet
+├── robust_pca_full_warped/
+│   └── <dataset>_<type>_robust_pca_full_warped.parquet
+├── first_derivatives_95_unwarped/
+│   └── <dataset>_<type>_first_derivatives_95_unwarped.parquet
+├── first_derivatives_95_warped/
+│   └── <dataset>_<type>_first_derivatives_95_warped.parquet
+├── raw_output_ttest_unwarped/
+│   └── <dataset>_<type>_raw_output_ttest_unwarped.parquet
+├── robust_pca_95_ttest_unwarped/
+│   └── <dataset>_<type>_robust_pca_95_ttest_unwarped.parquet
+└── changepoints/
+    └── <dataset>_changepoints.pkl
+```
+
+Where `<type>` is one of:
+- `rnn_latent` - RNN latent dimensions
+- `rnn_pred_fr` - RNN predicted firing rates
+- `rr_fr` - Rolling-window firing rates
+
+### Key Parameters Explained
+
+- **bin_size_ms**: Temporal resolution (typically 25ms)
+- **start_time_ms**: Trial start relative to stimulus (1500ms = 500ms pre-stim)
+- **max_time_ms**: Maximum trial duration to analyze
+- **warp_length**: Fixed duration for time-warping epochs (None disables warping)
+- **variance_threshold**: PCA variance to retain (95.0 = keep 95% of variance)
+- **derivative_source**: Compute derivatives on "threshold" PCA or "full" PCA
+
+### Common Use Cases
+
+**Extract latents only (no derivatives):**
+```python
+results = processor.full_pipeline(
+    compute_first_derivative=False,
+    compute_second_derivative=False,
+    save_outputs=True
+)
+epochs_unw, pca_95_unw, pca_full_unw, _, _, _, _, _, _, _ = results
+```
+
+**Extract changepoints only (fast):**
+```python
+changepoints_dict = processor.extract_changepoints_dict(save_outputs=True)
+```
+
+**Work with existing saved outputs:**
+```python
+from core.utils.read_parquets import read_parquet_files_into_dict
+
+# Load previously saved PCA results
+pca_dict = read_parquet_files_into_dict(
+    "/path/to/output/robust_pca_95_unwarped"
+)
+
+# Convert to pandas if needed
+import polars as pl
+for name, df in pca_dict.items():
+    pandas_df = df.to_pandas()
+    # ... analyze with pandas
+```
+
+### Troubleshooting
+
+**"No changepoints found"**: Verify pkl_path contains valid changepoint pickles
+
+**"Mismatch in taste/trial dimension"**: Check that npz spike arrays match info file metadata
+
+**Empty epochs**: Verify start_time_ms and max_time_ms cover your data range
+
+**IndexError during epoch slicing**: Upstream data may have incorrect TIME/CHANNEL ordering (see RNNLatentprocessing.py docstring)
+
+**Low firing rate neurons excluded from MWU**: Set `processor.enforce_fr_threshold = False` or adjust `processor.fr_threshold_hz`
+
+### References
+
+- Main processor: `/src/core/pre_processing/RNNLatentprocessing.py`
+- Parquet readers: `/src/core/utils/read_parquets.py`
+- Path configuration: `/src/core/config/roots_io.py`
+- Changepoint extraction: `/src/core/utils/unpkl_generator.py`
+- Spike train generation: `/src/core/utils/spike_train_to_npz.py`
+
+---
+
 # Original email from Vincent
 
 Subj: First of many emails to do with data
