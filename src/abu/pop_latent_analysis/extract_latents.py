@@ -2,6 +2,9 @@
 import os
 import sys
 from pprint import pprint as pp
+from matplotlib import pyplot as plt
+import xarray as xr
+
 base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
 src_dir = os.path.join(base_dir, 'src')
 sys.path.append(src_dir)
@@ -92,3 +95,43 @@ latents = read_parquet_files_into_dict(
 #  'trial',
 #  'time']
 
+##############################
+# Testing
+##############################
+
+# Load latents for one session and plot n random trials 
+session_key = 'AM11_4Tastes_191030_114043_repacked_raw_latent_vectors'
+session_latents = latents[session_key]
+
+# Convert first to xarray, then to numpy for plotting
+session_latents_xr = xr.Dataset.from_dataframe(session_latents.to_pandas())
+# Use taste, trial, and time as coordinates
+session_latents_xr = session_latents_xr.set_coords(['taste', 'trial', 'time'])
+
+# >>> session_latents_xr
+# <xarray.Dataset> Size: 914kB
+# Dimensions:       (index: 14280)
+# Coordinates:
+#   * index         (index) int64 114kB 0 1 2 3 4 ... 14276 14277 14278 14279
+#     taste         (index) int64 114kB 0 0 0 0 0 0 0 0 0 0 ... 3 3 3 3 3 3 3 3 3
+#     trial         (index) int64 114kB 0 0 0 0 0 0 0 ... 118 118 118 118 118 118
+#     time          (index) int64 114kB 0 1 2 3 4 5 6 7 ... 23 24 25 26 27 28 29
+# Data variables:
+#     latent_dim_0  (index) float32 57kB 0.9663 0.7289 0.9231 ... -0.2695 -0.05679
+#     latent_dim_1  (index) float32 57kB 0.01435 0.02545 ... -0.3328 -0.3073
+#     latent_dim_2  (index) float32 57kB -0.2186 -0.204 -0.5296 ... 0.9667 0.9145
+#     latent_dim_3  (index) float32 57kB -0.4211 -0.683 -0.2383 ... 0.4998 -0.1343
+#     latent_dim_4  (index) float32 57kB -0.2854 0.01026 ... -0.6104 -0.4006
+#     latent_dim_5  (index) float32 57kB -0.5398 -0.5113 -0.3503 ... 0.2839 0.2297
+#     latent_dim_6  (index) float32 57kB -0.5239 0.1935 0.8877 ... -0.9114 -0.5564
+#     latent_dim_7  (index) float32 57kB 0.3084 0.175 -0.1257 ... 0.9974 0.9753
+# >>> 
+
+# Concatenate all latent dimensions into a single DataArray with a new dimension 'latent_dim' 
+latent_dims = [x for x in session_latents_xr.data_vars if x.startswith('latent_dim')]
+latent_dim_index = [int(x.split('_')[-1]) for x in latent_dims]
+session_latents_da = xr.concat([session_latents_xr[dim] for dim in latent_dims], 
+                                dim='latent_dim')
+session_latents_da = session_latents_da.assign_coords(latent_dim=latent_dim_index)
+# Add taste, trial, and time as indexable dimensions
+# session_latents_da = session_latents_da.set_index(index=session_latents_xr.index)
