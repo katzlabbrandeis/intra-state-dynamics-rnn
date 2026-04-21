@@ -134,21 +134,27 @@ session_latents_da = xr.concat([session_latents_xr[dim] for dim in latent_dims],
                                 dim='latent_dim')
 session_latents_da = session_latents_da.assign_coords(latent_dim=latent_dim_index)
 
-# Reshape to (taste, trial, latent_dim, time) by setting multi-index and unstacking
-session_latents_da = session_latents_da.set_index(index=['taste', 'trial', 'time'])
+# Create per-taste trial index by grouping by taste and numbering within each group
+taste_coords = session_latents_da.coords['taste'].values
+trial_coords = session_latents_da.coords['trial'].values
+time_coords = session_latents_da.coords['time'].values
+
+# Create a per-taste trial index
+import pandas as pd
+df_coords = pd.DataFrame({'taste': taste_coords, 'trial': trial_coords, 'time': time_coords})
+df_coords['trial_within_taste'] = df_coords.groupby('taste').cumcount() // len(session_latents_da.coords['time'])
+
+# Add the new coordinate to the DataArray
+session_latents_da = session_latents_da.assign_coords(trial_within_taste=('index', df_coords['trial_within_taste'].values))
+
+# Reshape to (taste, trial_within_taste, latent_dim, time) by setting multi-index and unstacking
+session_latents_da = session_latents_da.set_index(index=['taste', 'trial_within_taste', 'time'])
 session_latents_da = session_latents_da.unstack('index')
 
-# Transpose to get dimensions in order: (taste, trial, latent_dim, time)
-session_latents_array = session_latents_da.transpose('taste', 'trial', 'latent_dim', 'time')
+# Transpose to get dimensions in order: (taste, trial_within_taste, latent_dim, time)
+session_latents_array = session_latents_da.transpose('taste', 'trial_within_taste', 'latent_dim', 'time')
 
-# Something is wrong, each taste should only have 30 trials
-
-# Coordinates:
-#   * taste       (taste) int64 32B 0 1 2 3
-#   * trial       (trial) int64 952B 0 1 2 3 4 5 6 ... 112 113 114 115 116 117 118
-#   * latent_dim  (latent_dim) int64 64B 0 1 2 3 4 5 6 7
-#   * time        (time) int64 240B 0 1 2 3 4 5 6 7 8 ... 22 23 24 25 26 27 28 29
+# Now each taste should have exactly 30 trials
 # >>> session_latents_array.shape
-# (4, 119, 8, 30)
-# >>> 
+# (4, 30, 8, 30)
 
