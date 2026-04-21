@@ -140,3 +140,15 @@ session_latents_da = session_latents_da.unstack('index')
 
 # Transpose to get dimensions in order: (taste, trial, latent_dim, time)
 session_latents_array = session_latents_da.transpose('taste', 'trial', 'latent_dim', 'time')
+
+# Something is wrong, each taste should only have 30 trials
+
+# Coordinates:
+#   * taste       (taste) int64 32B 0 1 2 3
+#   * trial       (trial) int64 952B 0 1 2 3 4 5 6 ... 112 113 114 115 116 117 118
+#   * latent_dim  (latent_dim) int64 64B 0 1 2 3 4 5 6 7
+#   * time        (time) int64 240B 0 1 2 3 4 5 6 7 8 ... 22 23 24 25 26 27 28 29
+# >>> session_latents_array.shape
+# (4, 119, 8, 30)
+# >>> 
+
