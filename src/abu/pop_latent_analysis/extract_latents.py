@@ -133,5 +133,10 @@ latent_dim_index = [int(x.split('_')[-1]) for x in latent_dims]
 session_latents_da = xr.concat([session_latents_xr[dim] for dim in latent_dims], 
                                 dim='latent_dim')
 session_latents_da = session_latents_da.assign_coords(latent_dim=latent_dim_index)
-# Add taste, trial, and time as indexable dimensions
-# session_latents_da = session_latents_da.set_index(index=session_latents_xr.index)
+
+# Reshape to (taste, trial, latent_dim, time) by setting multi-index and unstacking
+session_latents_da = session_latents_da.set_index(index=['taste', 'trial', 'time'])
+session_latents_da = session_latents_da.unstack('index')
+
+# Transpose to get dimensions in order: (taste, trial, latent_dim, time)
+session_latents_array = session_latents_da.transpose('taste', 'trial', 'latent_dim', 'time')
