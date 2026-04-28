@@ -43,91 +43,105 @@ pp(data_dir_list)
 #
 # Load best model info dataframe
 best_models_df_fp = os.path.join(
-    artifacts_subdir, 'best_model_info_df.pkl'
+    artifacts_dir, 'ephys_changepoint_models', 'best_model_info_df.pkl'
     )
 with open(best_models_df_fp, 'rb') as f:
     best_models_df = load(f)
 
 ##############################
 
-fit_data_list = []
-for this_dir in tqdm(data_dir_list, desc='Processing data dirs'):
-
-    this_dat = ephys_data.ephys_data(this_dir)
-    this_dat.profile_units(recalculate=False)
-    basename = os.path.basename(this_dir)
-
-    if 'spikes' not in dir(this_dat):
-        this_dat.get_spikes()
-        this_dat.get_info_dict()
-
-    this_dat.check_laser()
-    if this_dat.laser_exists:
-        this_dat.separate_laser_spikes()
-        off_spikes = this_dat.off_spikes
-    else:
-        off_spikes = this_dat.spikes
-
-    # Only stable units
-    stable_alpha = 0.005
-    stable_units = this_dat.unit_profile[
-            this_dat.unit_profile['stable_pval'] > stable_alpha
-            ]['neuron_num'].values
-
-
-    selected_units = stable_units  # For now, just use stable units for both conditions
-
-    taste_names = this_dat.info_dict['taste_params']['tastes']
-
-    for taste_ind, taste_name in enumerate(taste_names):
-        # Extract spike trains for selected units
-        spike_trains = off_spikes[taste_ind]
-        time_lims = [1500, 4000]
-        spike_trains = spike_trains[:, :, time_lims[0]:time_lims[1]]  # Trim to time window
-        only_stable_spikes = spike_trains[:, stable_units]
-        selected_spikes = spike_trains[:, selected_units]
-
-        fit_data_list.append({
-            'basename': basename,
-            'taste_name': taste_name,
-            'dat_type': 'stable_only',
-            'spike_trains': only_stable_spikes,
-        })
-
-# Combine into a dataframe and write to disk
-fit_data_df = pd.DataFrame(fit_data_list)
-fit_data_df['n_neurons'] = fit_data_df['spike_trains'].apply(lambda x: x.shape[1])
-# Drop any datasets with <8 neurons
-fit_data_df = fit_data_df[fit_data_df['n_neurons'] >= 8].reset_index(drop=True)
-
-##############################
-# Keep only rows that are in best_models_df
-best_fit_data_df = fit_data_df.merge(
-    best_models_df,
-    on=['basename', 'taste_name', 'dat_type'],
-    how='inner',
-    suffixes=('_fit_data', '_model_info')
-)
+reload_data_bool = False
 
 # Save best fit data dataframe
 best_fit_data_df_fp = os.path.join(
     artifacts_subdir, 'best_fit_data_df.pkl'
     )
-with open(best_fit_data_df_fp, 'wb') as f:
-    dump(best_fit_data_df, f)
+if reload_data_bool:
+    fit_data_list = []
+    for this_dir in tqdm(data_dir_list, desc='Processing data dirs'):
 
-# Write out a note in artifacts_subdir to indicate what library and version dump function is from
-dump_note_fp = os.path.join(artifacts_subdir, 'dump_note.txt')
-with open(dump_note_fp, 'w') as f:
-    f.write(f'This directory contains dataframes dumped using cloudpickle version {cloudpickle.__version__}')
+        this_dat = ephys_data.ephys_data(this_dir)
+        this_dat.profile_units(recalculate=False)
+        basename = os.path.basename(this_dir)
 
-##############################
+        if 'spikes' not in dir(this_dat):
+            this_dat.get_spikes()
+            this_dat.get_info_dict()
 
-# Load best fit data dataframe and save spike rasters as spike-times
-best_fit_data_df_fp = os.path.join(
-    artifacts_subdir, 'best_fit_data_df.pkl'
+        this_dat.check_laser()
+        if this_dat.laser_exists:
+            this_dat.separate_laser_spikes()
+            off_spikes = this_dat.off_spikes
+        else:
+            off_spikes = this_dat.spikes
+
+        # Only stable units
+        stable_alpha = 0.005
+        stable_units = this_dat.unit_profile[
+                this_dat.unit_profile['stable_pval'] > stable_alpha
+                ]['neuron_num'].values
+
+
+        selected_units = stable_units  # For now, just use stable units for both conditions
+
+        taste_names = this_dat.info_dict['taste_params']['tastes']
+
+        for taste_ind, taste_name in enumerate(taste_names):
+            # Extract spike trains for selected units
+            spike_trains = off_spikes[taste_ind]
+            time_lims = [1500, 4000]
+            spike_trains = spike_trains[:, :, time_lims[0]:time_lims[1]]  # Trim to time window
+            only_stable_spikes = spike_trains[:, stable_units]
+            selected_spikes = spike_trains[:, selected_units]
+
+            fit_data_list.append({
+                'basename': basename,
+                'taste_name': taste_name,
+                'dat_type': 'stable_only',
+                'spike_trains': only_stable_spikes,
+            })
+
+    # Combine into a dataframe and write to disk
+    fit_data_df = pd.DataFrame(fit_data_list)
+    fit_data_df['n_neurons'] = fit_data_df['spike_trains'].apply(lambda x: x.shape[1])
+    # Drop any datasets with <8 neurons
+    fit_data_df = fit_data_df[fit_data_df['n_neurons'] >= 8].reset_index(drop=True)
+
+    ##############################
+    # Keep only rows that are in best_models_df
+    best_fit_data_df = fit_data_df.merge(
+        best_models_df,
+        on=['basename', 'taste_name', 'dat_type'],
+        how='inner',
+        suffixes=('_fit_data', '_model_info')
     )
-best_fit_data_df = pd.read_pickle(best_fit_data_df_fp)
+
+    with open(best_fit_data_df_fp, 'wb') as f:
+        dump(best_fit_data_df, f)
+
+    # Write out a note in artifacts_subdir to indicate what library and version dump function is from
+    dump_note_fp = os.path.join(artifacts_subdir, 'dump_note.txt')
+    with open(dump_note_fp, 'w') as f:
+        f.write(f'This directory contains dataframes dumped using cloudpickle version {cloudpickle.__version__}')
+else:
+    print(f"Skipping data processing and loading best fit data dataframe from {best_fit_data_df_fp}")
+
+    ##############################
+
+    # Load best fit data dataframe and save spike rasters as spike-times
+    best_fit_data_df = pd.read_pickle(best_fit_data_df_fp)
+
+# # Also append changepoints to best_fit_data_df
+# model_save_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/artifacts/ephys_changepoint_models/models'
+# for row_ind, this_row in best_fit_data_df.iterrows():
+#     save_name = this_row['save_path']
+#     save_path = os.path.join(model_save_dir, save_name)
+#     with open(save_path, 'rb') as f:
+#         model_tuple = load(f)
+#     changepoints = model_tuple[-2]
+#     # time_lims = [2000, 4000]
+#     # bin_size = 50
+#     # Scale changepoints given above fit parameters
 
 
 # Generate splits and save to disk
