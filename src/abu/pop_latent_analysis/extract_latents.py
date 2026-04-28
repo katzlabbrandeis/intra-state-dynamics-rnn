@@ -11,7 +11,8 @@ sys.path.append(src_dir)
 
 from core.utils.read_parquets import read_parquet_files_into_dict
 # /media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/july_25_rnn_with_fr/pred_latent
-rel_data_path = 'output/july_25_rnn_with_fr/pred_latent'
+# rel_data_path = 'output/july_25_rnn_with_fr/pred_latent'
+rel_data_path = 'output/oct_rnn_thesis_rnn/pred_latent'
 abs_data_path = f"{base_dir}/{rel_data_path}"
 
 # make sure path exists
@@ -34,6 +35,8 @@ if not os.path.exists(abs_data_path):
 #     -------
 #     dict
 #         Dictionary where keys are filenames (no extension) and values are Polars DataFrames.
+
+abs_data_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/oct_rnn_thesis_rnn/output_taste/AM11_4Tastes_191030_114043_repacked/artifacts'
 
 latents = read_parquet_files_into_dict(
     abs_data_path,
@@ -99,9 +102,58 @@ latents = read_parquet_files_into_dict(
 # Testing
 ##############################
 
+# Check how many trials per taste for each session
+for session_key, session_latents in latents.items():
+    session_latents_df = session_latents.to_pandas()
+    taste_trial_counts = session_latents_df.groupby('taste')['trial'].nunique()
+    print(f"Session: {session_key}")
+    print(taste_trial_counts)
+    print("-" * 40)
+
 # Load latents for one session and plot n random trials 
 session_key = 'AM11_4Tastes_191030_114043_repacked_raw_latent_vectors'
 session_latents = latents[session_key]
+
+session_latents_df = session_latents.to_pandas()
+
+# Get taste 0
+taste_0_latents = session_latents_df[session_latents_df['taste'] == 0]
+
+fig, ax = plt.subplots(1,3, sharey=True, figsize=(12,6))
+ax[0].imshow(taste_0_latents[taste_0_latents.columns[:8]].values, aspect='auto', interpolation='none')
+# Also plot index on adjacent subplot to verify trial structure
+im1 = ax[1].imshow(taste_0_latents['trial'].values[:,None], aspect='auto', interpolation='none')
+im2 = ax[2].imshow(taste_0_latents['time'].values[:,None], aspect='auto', interpolation='none')
+ax[1].set_xlabel('Trials')
+ax[0].set_title('Latent Dimensions')
+ax[1].set_title('Trial Index')
+ax[2].set_title('Time Index')
+# Add colorbars for time and trial
+fig.colorbar(im1, ax=ax[1], orientation='vertical', label='Trial Index')
+fig.colorbar(im2, ax=ax[2], orientation='vertical', label='Time Index')
+plt.show()
+
+# Plot all tastes to see any duplication
+fig, ax = plt.subplots(1,4, sharey=True, figsize=(12,6))
+ax[0].imshow(session_latents_df[session_latents_df.columns[:8]].values, aspect='auto', interpolation='none')
+ax[0].set_title('Latent Dimensions')
+# Also plot index on adjacent subplot to verify trial structure
+im1 = ax[1].imshow(session_latents_df['taste'].values[:,None], aspect='auto', interpolation='none')
+im2 = ax[2].imshow(session_latents_df['trial'].values[:,None], aspect='auto', interpolation='none')
+im3 = ax[3].imshow(session_latents_df['time'].values[:,None], aspect='auto', interpolation='none')
+ax[2].set_xlabel('Trials')
+ax[2].set_title('Trial Index')
+ax[3].set_title('Time Index')
+# Add colorbars for time and trial
+fig.colorbar(im1, ax=ax[1], orientation='vertical', label='Taste Index')
+fig.colorbar(im2, ax=ax[2], orientation='vertical', label='Trial Index')
+fig.colorbar(im3, ax=ax[3], orientation='vertical', label='Time Index')
+plt.show()
+
+# Trials are all concatenated, so we need to create a trial index that resets for each taste
+# Get unique taste, trial pairs and createa a map
+taste_trial_pairs = session_latents_df[['taste', 'trial']].drop_duplicates().reset_index(drop=True)
+taste_trial_pairs['trial_within_taste'] = taste_trial_pairs.groupby('taste').cumcount()
 
 # Convert first to xarray, then to numpy for plotting
 session_latents_xr = xr.Dataset.from_dataframe(session_latents.to_pandas())
@@ -133,6 +185,30 @@ latent_dim_index = [int(x.split('_')[-1]) for x in latent_dims]
 session_latents_da = xr.concat([session_latents_xr[dim] for dim in latent_dims], 
                                 dim='latent_dim')
 session_latents_da = session_latents_da.assign_coords(latent_dim=latent_dim_index)
+
+# >>> session_latents_da
+# <xarray.DataArray 'latent_dim_0' (latent_dim: 8, index: 14280)> Size: 457kB
+# array([[ 0.96625423,  0.7289341 ,  0.92309684, ..., -0.6423173 ,
+#         -0.2695159 , -0.05679017],
+#        [ 0.01434567,  0.02545078,  0.31882048, ..., -0.7508022 ,
+#         -0.3327791 , -0.30734122],
+#        [-0.21861674, -0.20399822, -0.52957875, ...,  0.92214787,
+#          0.9666619 ,  0.91450393],
+#        ...,
+#        [-0.53976333, -0.511271  , -0.35027114, ...,  0.21953066,
+#          0.2839369 ,  0.22973868],
+#        [-0.5239218 ,  0.1935095 ,  0.8876943 , ..., -0.36798695,
+#         -0.91144234, -0.55636597],
+#        [ 0.30838275,  0.17500716, -0.12573628, ...,  0.99749285,
+#          0.9974137 ,  0.97525454]], shape=(8, 14280), dtype=float32)
+# Coordinates:
+#   * latent_dim          (latent_dim) int64 64B 0 1 2 3 4 5 6 7
+#   * index               (index) object 114kB MultiIndex
+#     trial               (index) int64 114kB 0 0 0 0 0 0 ... 118 118 118 118 118
+#   * taste               (index) int64 114kB 0 0 0 0 0 0 0 0 ... 3 3 3 3 3 3 3 3
+#   * trial_within_taste  (index) int64 114kB 0 0 0 0 0 0 0 0 ... 0 0 0 0 0 0 0 0
+#   * time                (index) int64 114kB 0 1 2 3 4 5 6 ... 24 25 26 27 28 29
+
 
 # Create per-taste trial index by grouping by taste and numbering within each group
 taste_coords = session_latents_da.coords['taste'].values
