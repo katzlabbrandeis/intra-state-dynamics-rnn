@@ -25,3 +25,4 @@ output/
 __pycache__/
 /output
 .aider*
+*cache
