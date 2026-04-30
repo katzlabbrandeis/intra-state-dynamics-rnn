@@ -15,6 +15,7 @@ from itertools import product
 import pandas as pd
 import pingouin as pg
 from tqdm import tqdm
+from glob import glob
 
 base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
 src_dir = os.path.join(base_dir, 'src')
@@ -27,6 +28,28 @@ artifacts_dir = f"{base_dir}/output/artifacts/population_analysis"
 array_artifacts_dir = f"{artifacts_dir}/latent_arrays"
 dfs_artifacts_dir = f"{artifacts_dir}/latent_dfs"
 
+##############################
+# Get spike-trains
+
+spike_train_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/spike_trains_npz'
+spike_train_files = glob(f'{spike_train_dir}/*.npz')
+basename_list = [os.path.basename(f).replace('_repacked.npz', '') for f in spike_train_files]
+
+# From both basename_list and tau_frame['basename'], drop any "_repacked" or "_copy" suffixes
+basename_list = [name.replace('_repacked', '').replace('_copy', '') for name in basename_list]
+
+# Load all spike train files into a dict
+spike_train_dict = {this_name: np.load(this_file) for this_name, this_file in zip(basename_list, spike_train_files)}
+
+# All files have only 1 array but with different key names
+# Each values array has shape: (taste, trial, neuron, time)
+spike_train_dict = {k: v[list(v.files)[0]] for k, v in spike_train_dict.items()}
+
+# Cut and bin spike_trains to same params as latents
+bin_size = 25 # ms
+ind_lims = [1500, 4500] 
+
+##############################
 ##############################
 # Load dfs to perform anova for consistency across trials
 latent_df_list = os.listdir(dfs_artifacts_dir)
@@ -49,18 +72,22 @@ for df in latent_dfs:
 
 # For each taste per session, perform 2-way anova across trials and time bins for each latent dimension to check for consistency across trials
 anova_results = []
-anova_inds = []
 for session_name, df in tqdm(zip(session_names, binned_latent_dfs)): 
     for taste in df['taste'].unique():
         taste_df = df[df['taste'] == taste]
         for latent_dim in taste_df['latent_dim'].unique():
             latent_dim_df = taste_df[taste_df['latent_dim'] == latent_dim]
-            aov = pg.anova(dv='latent_value', between=['trial', 'time_bin'], data=latent_dim_df, detailed=True)
+            aov = pg.anova(
+                    dv='latent_value', 
+                    between=['trial', 'time_bin'], 
+                    data=latent_dim_df, 
+                    detailed=True
+                    )
             aov['taste'] = taste
             aov['latent_dim'] = latent_dim
             anova_results.append(aov)
-            anova_inds.append((session_name, taste, latent_dim))
 
+all_aov_df = pd.concat(anova_results, ignore_index=True).dropna()
 
 
 ##############################
@@ -92,3 +119,4 @@ latent_df = pd.DataFrame(
         columns=['session', 'taste', 'latent_array'],
         data=data_list
         )
+
