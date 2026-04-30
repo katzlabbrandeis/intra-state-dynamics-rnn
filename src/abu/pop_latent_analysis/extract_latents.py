@@ -23,6 +23,14 @@ from core.utils.read_parquets import read_parquet_files_into_dict
 rel_data_path = 'output/intermediate_data/RNN_PROCESSING_PARQUETS/latent_outputs/raw_output_unwarped'
 abs_data_path = f"{base_dir}/{rel_data_path}"
 
+artifacts_dir = f"{base_dir}/output/artifacts/population_analysis"
+array_artifacts_dir = f"{artifacts_dir}/latent_arrays"
+if not os.path.exists(array_artifacts_dir):
+    os.makedirs(array_artifacts_dir)
+dfs_artifacts_dir = f"{artifacts_dir}/latent_dfs"
+if not os.path.exists(dfs_artifacts_dir):
+    os.makedirs(dfs_artifacts_dir)
+
 # make sure path exists
 if not os.path.exists(abs_data_path):
     raise FileNotFoundError(f"Data path does not exist: {abs_data_path}")
@@ -136,12 +144,18 @@ for session_key in latents.keys():
     # Set multi-index to easily convert to xarray
     session_latents_melted.set_index(['taste', 'trial', 'latent_dim', 'time'], inplace=True)
 
+    # Write out melted dataframe for this session for easier debugging later on
+    session_latents_melted.to_csv(f"{dfs_artifacts_dir}/{session_key}_latents_melted.csv")
+
     # Convert to xarray
     session_latents_xr = xr.Dataset.from_dataframe(session_latents_melted)
 
     # Convert to numpy array
     # Shape: (4, 30, 8, 119)
     session_latents_np = np.squeeze(session_latents_xr.to_array().values)
+
+    # Write out numpy array for this session
+    np.save(f"{array_artifacts_dir}/{session_key}_latents.npy", session_latents_np)
 
     # # Plot all latents with taste x trial stacked
     # stacked_latents = np.concatenate(session_latents_np, axis=0)  # Shape: (4*30, 8, 119)
@@ -164,3 +178,12 @@ for session_key in latents.keys():
     plt.tight_layout()
     fig.savefig(f"{plot_dir}/{session_key}_all_latent_dims_stacked.png")
     plt.close(fig)
+
+# Also write out a note to artifacts dir about how latents for each taste were fit independently, so the latent dimensions are not directly comparable across tastes. This is important to remember when analyzing the latents later on.
+with open(f"{array_artifacts_dir}/README.txt", 'w') as f:
+    f.write("Note: Latent dimensions for each taste were fit independently, so the latent dimensions are not directly comparable across tastes. This is important to remember when analyzing the latents later on.")
+
+# Write same note to dfs artifacts dir
+with open(f"{dfs_artifacts_dir}/README.txt", 'w') as f:
+    f.write("Note: Latent dimensions for each taste were fit independently, so the latent dimensions are not directly comparable across tastes. This is important to remember when analyzing the latents later on.")
+
