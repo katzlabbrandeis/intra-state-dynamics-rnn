@@ -16,14 +16,22 @@ from core.utils.read_parquets import read_parquet_files_into_dict
 # /media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/july_25_rnn_with_fr/pred_latent
 # rel_data_path = 'output/july_25_rnn_with_fr/pred_latent'
 # /output/JULY_RNN_RUN
-rel_data_path = 'output/oct_rnn_thesis_rnn/pred_latent'
+# abs_data_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/oct_rnn_thesis_rnn/output_taste/AM11_4Tastes_191030_114043_repacked/artifacts'
+
+# abs_data_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/RNN_PROCESSING_PARQUETS/latent_outputs/raw_output_unwarped'
+# rel_data_path = 'output/oct_rnn_thesis_rnn/pred_latent'
+rel_data_path = 'output/intermediate_data/RNN_PROCESSING_PARQUETS/latent_outputs/raw_output_unwarped'
 abs_data_path = f"{base_dir}/{rel_data_path}"
 
 # make sure path exists
 if not os.path.exists(abs_data_path):
     raise FileNotFoundError(f"Data path does not exist: {abs_data_path}")
 
-# Load previously saved PCA results
+plot_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/plots/population_analysis/latents_plots'
+if not os.path.exists(plot_dir):
+    os.makedirs(plot_dir)
+
+##############################
 
 # Help on function read_parquet_files_into_dict in module core.utils.read_parquets:
 #
@@ -39,10 +47,6 @@ if not os.path.exists(abs_data_path):
 #     -------
 #     dict
 #         Dictionary where keys are filenames (no extension) and values are Polars DataFrames.
-
-# abs_data_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/oct_rnn_thesis_rnn/output_taste/AM11_4Tastes_191030_114043_repacked/artifacts'
-
-abs_data_path = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/RNN_PROCESSING_PARQUETS/latent_outputs/raw_output_unwarped'
 
 latents = read_parquet_files_into_dict(
     abs_data_path,
@@ -111,10 +115,6 @@ latents = read_parquet_files_into_dict(
 # Load latents for one session and plot n random trials 
 # session_key = 'AM11_4Tastes_191030_114043_repacked_raw_latent_vectors'
 # session_key = 'AM11_4Tastes_191030_114043_rnn_latent_raw_output_unwarped'
-
-plot_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/plots/population_analysis/latents_plots'
-if not os.path.exists(plot_dir):
-    os.makedirs(plot_dir)
 
 for session_key in latents.keys():
     session_latents = latents[session_key]
