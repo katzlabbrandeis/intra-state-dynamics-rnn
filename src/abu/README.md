@@ -444,3 +444,53 @@ I know this is a lot-- probably slightly overwhelming. Working on making it make
 
 (Multigrain) Cheerio, 
 Vincent 
+
+# Additional guidance from Vincent
+
+
+Tue, Apr 28, 4:31 PM (7 days ago)
+to me
+
+No worries- here's the gist of 'RNNLatentprocessing': 
+
+(admittedly, it's a bit of a bear) 
+
+quickly: I think the thing you probably care about most is raw_output_unwarped. To be clear, all that's happened there is steps 1-6 of "always happens". Results in time in (ms), correct col labeling, some indexing corrections, and an extra col for what epoch you're in, depending on a range of factors. 
+
+The inputs of this class are both many and (in some cases) outdated. It directly ingests the RNN code's outputs -- such as the dataframe you had initially loaded. 
+
+
+But for a full view: 
+
+Always runs (every time is called regardless of flag): 
+Reads initial parquets (from the RNN) into a polars dataframe 
+Reshapes DataFrames into 4D NumPy arrays — built as (taste, trial, channels, time) but unpacked as (taste, time, channels, trial) in epoch slicing; this is a known internal inconsistency (lots of notes about this bug) that is explicitly left alone as the slicing still works correctly- as the below correction corrects said bug and does a few other things. (note: I made the correction when I initially couldn't find this exact bug). 
+Detects column type (latent vs. neuron) by prefix, sets flags, and fixes 0→1 indexing on column names
+Silently corrects an upstream TIME/CHANNEL axis-swap bug from the RNN exporter, such that all outputs from this class have the correct orientation regardless of what came in
+Unpickles changepoint models, extracts per-taste/trial changepoint timestamps in ms from `.pkl` file (see extract_valid_changepoints, extract_changepoints, extract_changepoints_dict). NOTE: this saves changepoints to `<save_dir>/changepoints/<core>_changepoints.pkl` in the outputs 
+Slices the time axis of each trial at changepoint boundaries, attaches taste/trial/changepoint/time metadata, and immediately concatenates the sliced trials back into the full thing into per-dataset epoch DataFrames (Polars). (Inefficient? you betcha. look at the split_epochs_by_changepoint method. I honestly don't know why I didn't just join a new dataframe col 'changepoint' as indexed by (time, trial) for this. It's worked this entire time so...?
+For each taste×changepoint group: concatenates trials via `np.vstack`, fits `sklearn.decomposition.PCA`, splits results back via `np.split` — storing both a full-PC version and a cumulative-variance-thresholded version (≥ N%)
+Optionally runs (according to user-set flags in the runtime call): 
+Timescale warping: (`warp_all_outputs`): per taste×trial×epoch, normalizes the time axis to [0,1] and resamples to a fixed bin count via `scipy.interpolate.interp1d` (linear) and saves it
+Computes first difference in the data: (`compute_first_derivative`): `np.gradient` along the time axis on either the thresholded or full PCA output and saves it
+Computes second difference in the data: (`compute_second_derivative`): `np.gradient` applied twice on the same source and saves it
+MWU half-split (`run_mwu_halfsplit`): splits each (taste, changepoint, trial) segment in half, runs `scipy.stats.mannwhitneyu` (two-sided) per signal dimension, computes Cliff's delta from the U statistic, appends per-dim p-value / delta / significance as repeated columns — with an optional `np.nanmean` firing rate gate that skips low-activity `neuron_*` columns. This was designed to do the whole "first half/second half significant difference" thing. 
+Saving (`save_analysis_outputs`): writes all populated dicts to organized subdirectories as `.parquet` files via Polars
+Returns / Outputs (and what was done to get there): 
+`raw_output_unwarped` | Raw signals (latent dims or neuron firing rates) sliced into changepoint-bounded epochs, with taste/trial/changepoint/time columns. 
+NOTE: these raw outputs are named self.epoch_dataframes_dict_unwarped internally, but in save_analysis_outputs the key used for the output subdirectory is "raw_output" (comment from when I changed the name: # changed from epoch_dataframes to raw_output). So the save path becomes raw_output_unwarped/ and raw_output_warped/. Note, `epoch_dataframes_dict_` (warped or unwarped) is a legacy name but otherwise an identical object. 
+`raw_output_warped` | same as above, but each epoch is resampled via  linear interpolation. Done if warp_length is not none. 
+ `robust_pca_{N}_unwarped` | Epochs with PCA applied (trials concatenated, fit, re-split), truncated to the N% cumulative variance threshold 
+ `robust_pca_{N}_warped` | Same PCA-thresholded output, time-warped. Done if warp_length is not none. 
+`robust_pca_full_unwarped` | Same PCA pipeline but all PCs retained (full variance) 
+`robust_pca_full_warped` | Same, time-warped. Done if warp_length is not none.
+`first_derivatives_{N}_unwarped/warped` | `np.gradient` (once) applied to the thresholded or full PCA output. OPTIONAL (based on compute_first_derivatives flag) 
+`second_derivatives_{N}_unwarped/warped` | `np.gradient` applied twice to the same source. OPTIONAL (based on compute_second_derivatives flag) 
+`ttest_raw_output_unwarped` | Raw epoch DataFrames with MWU half-split results appended (p-value, Cliff's delta, significance per dim). OPTIONAL (based on compute_ttest flag) 
+`ttest_robust_pca_{N}_unwarped` | PCA-thresholded DataFrames with same MWU columns appended. OPTIONAL (based on compute_ttest flag) 
+
+I know that's a lot-- this one is kinda a mega class with a lot of over-time bloat. 
+Again- all that's going on in raw_output_unwarped are steps 1-6 of "always happens". Results in time in (ms), correct col labeling, some indexing corrections, and an extra col for what epoch you're in, depending on a range of factors. 
+
+Hope that helps-- 
+Vincent
