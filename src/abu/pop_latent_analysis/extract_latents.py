@@ -187,3 +187,62 @@ with open(f"{array_artifacts_dir}/README.txt", 'w') as f:
 with open(f"{dfs_artifacts_dir}/README.txt", 'w') as f:
     f.write("Note: Latent dimensions for each taste were fit independently, so the latent dimensions are not directly comparable across tastes. This is important to remember when analyzing the latents later on.")
 
+############################################################
+# Also extract firing rates for each session in the same format as latents for easier comparison later on. This will be used to compare the quality of the latents to the original firing rates.
+############################################################
+
+fr_pq_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn/output/intermediate_data/pred_fr_clean'
+
+rnn_firing_rates = read_parquet_files_into_dict(
+    fr_pq_dir,
+)
+
+# Strucutre: dict
+# Each entry looks like this:
+# 'AM35_4Tastes_201231_105700_repacked_repacked_raw_predicted_firing': shape: (14_280, 31)
+# ┌──────────┬──────────┬───────────┬──────────┬───┬───────────┬───────┬───────┬──────┐
+# │ neuron_0 ┆ neuron_1 ┆ neuron_2  ┆ neuron_3 ┆ … ┆ neuron_27 ┆ taste ┆ trial ┆ time │
+# │ ---      ┆ ---      ┆ ---       ┆ ---      ┆   ┆ ---       ┆ ---   ┆ ---   ┆ ---  │
+# │ f64      ┆ f64      ┆ f64       ┆ f64      ┆   ┆ f64       ┆ i64   ┆ i64   ┆ i64  │
+# ╞══════════╪══════════╪═══════════╪══════════╪═══╪═══════════╪═══════╪═══════╪══════╡
+# │ 4.589677 ┆ 1.721299 ┆ 12.442411 ┆ 1.896385 ┆ … ┆ 0.097232  ┆ 0     ┆ 0     ┆ 0    │
+# │ 5.599153 ┆ 1.538928 ┆ 12.72961  ┆ 2.255279 ┆ … ┆ -0.146568 ┆ 0     ┆ 1     ┆ 0    │
+# │ 5.575372 ┆ 0.737943 ┆ 11.352234 ┆ 2.307653 ┆ … ┆ 0.310867  ┆ 0     ┆ 2     ┆ 0    │
+# │ 5.947958 ┆ 0.666351 ┆ 10.949901 ┆ 2.331769 ┆ … ┆ 0.240528  ┆ 0     ┆ 3     ┆ 0    │
+# │ 6.898021 ┆ 0.547621 ┆ 11.052068 ┆ 2.45869  ┆ … ┆ 0.410288  ┆ 0     ┆ 4     ┆ 0    │
+# │ …        ┆ …        ┆ …         ┆ …        ┆ … ┆ …         ┆ …     ┆ …     ┆ …    │
+# │ 3.56381  ┆ 2.098343 ┆ 11.858298 ┆ 1.366497 ┆ … ┆ 0.273838  ┆ 3     ┆ 114   ┆ 29   │
+# │ 4.948151 ┆ 1.048931 ┆ 10.843879 ┆ 1.77379  ┆ … ┆ 0.379416  ┆ 3     ┆ 115   ┆ 29   │
+# │ 4.823439 ┆ 0.660264 ┆ 9.857202  ┆ 2.011089 ┆ … ┆ 0.67263   ┆ 3     ┆ 116   ┆ 29   │
+# │ 4.415578 ┆ 0.765167 ┆ 9.556287  ┆ 1.938127 ┆ … ┆ 0.779232  ┆ 3     ┆ 117   ┆ 29   │
+# │ 3.485828 ┆ 2.159206 ┆ 10.837589 ┆ 1.896595 ┆ … ┆ 0.756261  ┆ 3     ┆ 118   ┆ 29   │
+# └──────────┴──────────┴───────────┴──────────┴───┴───────────┴───────┴───────┴──────┘}
+#
+
+# Convert to numpy arrays with shape: (taste, trial, neuron, time) for easier comparison to latents later on
+firing_rate_arrays_dir = os.path.join(artifacts_dir, 'firing_rate_arrays')
+os.makedirs(firing_rate_arrays_dir, exist_ok=True)
+
+for session_key in rnn_firing_rates.keys():
+    session_fr = rnn_firing_rates[session_key]
+
+    session_fr_df = session_fr.to_pandas()
+
+    # Set multi-index to easily convert to xarray
+    session_fr_df.set_index(['taste', 'trial', 'time'], inplace=True)
+
+    # Convert to xarray
+    session_fr_xr = xr.Dataset.from_dataframe(session_fr_df)
+
+    # Convert to numpy array
+    # Shape: (neurons, taste, time, trial) -> need to reorder to (taste, trial, neuron, time) to match latents
+    session_fr_np = np.squeeze(session_fr_xr.to_array().values)
+    session_fr_np = np.transpose(session_fr_np, (1, 3, 0, 2))  # Reorder to (taste, trial, neuron, time) 
+
+    # Write out numpy array for this session
+    np.save(f"{array_artifacts_dir}/{session_key}_fr.npy", session_fr_np)
+
+# write out a note about how firing rate inference for each taste was performed independently, so the firing rates are not directly comparable across tastes. This is important to remember when analyzing the firing rates later on. 
+with open(f"{firing_rate_arrays_dir}/README.txt", 'w') as f:
+    f.write("Note: Firing rate inference for each taste was performed independently, so the firing rates are not directly comparable across tastes. This is important to remember when analyzing the firing rates later on.")
+
