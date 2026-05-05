@@ -240,7 +240,7 @@ for session_key in rnn_firing_rates.keys():
     session_fr_np = np.transpose(session_fr_np, (1, 3, 0, 2))  # Reorder to (taste, trial, neuron, time) 
 
     # Write out numpy array for this session
-    np.save(f"{array_artifacts_dir}/{session_key}_fr.npy", session_fr_np)
+    np.save(f"{firing_rate_arrays_dir}/{session_key}_fr.npy", session_fr_np)
 
 # write out a note about how firing rate inference for each taste was performed independently, so the firing rates are not directly comparable across tastes. This is important to remember when analyzing the firing rates later on. 
 with open(f"{firing_rate_arrays_dir}/README.txt", 'w') as f:
