@@ -24,6 +24,10 @@ base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
 src_dir = os.path.join(base_dir, 'src')
 sys.path.append(src_dir)
 
+pop_analysis_src_dir = os.path.join(src_dir, 'abu', 'model_fitting','population_analysis')
+sys.path.append(pop_analysis_src_dir)
+import utils
+
 rel_data_path = 'output/intermediate_data/RNN_PROCESSING_PARQUETS/latent_outputs/raw_output_unwarped'
 abs_data_path = f"{base_dir}/{rel_data_path}"
 
@@ -248,7 +252,7 @@ max_val = max(plot_spike_counts.max(), plot_frs_corrected.max())
 plt.plot([0, max_val], [0, max_val], 'r--')
 plt.xlabel('Binned Spike Count')
 plt.ylabel('Firing Rate')
-plt.title('Binned Spike Count vs Firing Rate (sample of points)')
+plt.title(f'Binned Spike Count vs Firing Rate (sample of points)\nPearson r: {corr:.2f}, p-value: {p_value:.2e}')
 plt.savefig(os.path.join(spike_fr_plot_dir, f'binned_spikes_vs_firing_rate.png'), bbox_inches='tight')
 plt.close()
 
@@ -265,4 +269,136 @@ plt.xlabel('Binned Spike Count')
 plt.ylabel('Firing Rate')
 plt.title('KDE of Binned Spike Count vs Firing Rate')
 plt.savefig(os.path.join(spike_fr_plot_dir, f'binned_spikes_vs_firing_rate_kde.png'), bbox_inches='tight')
+plt.close()
+
+
+# utils.calc_bits_per_spike(spike_train, rate):
+# """
+# Calculate bits per spike for a given spike train and firing rate.
+# Args:
+#     spike_train: numpy array of shape (trials, time_bins) with binary values indicating spikes
+#     rate: firing rate in Hz (spikes per second)
+# Returns:
+#     bits per spike
+#
+# Refs:
+#     - https://neuronaldynamics.epfl.ch/online/Ch10.S3.html
+#     - https://www.biorxiv.org/content/10.1101/2025.02.07.637062v2.full
+# """
+
+# For each neuron and taste, calculate bits per spike using utils.calc_bits_per_spike and compare to trial-shuffled data
+# Correct for scaling issues by dividing firing rates by slope from linear regression
+bits_per_spike_results = []
+for row_ind, this_row in tqdm(spike_fr_df.iterrows(), total=spike_fr_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    binned_spike_train = this_row['binned_spike_train'][..., :-1] # drop last time bin to match fr_array shape
+    fr_array = this_row['fr_array'] / model.coef_[0] # correct for scaling issues
+    # Because network did not have strictly positive output, clip output at 0 to avoid issues with bits/spike calculation 
+    fr_array = np.clip(fr_array, a_min=0, a_max=None)
+    mean_fr = fr_array.mean(axis=None)
+
+    for neuron in range(fr_array.shape[1]):
+        spike_train = binned_spike_train[:, neuron]
+        rate = fr_array[:, neuron]
+        bits_per_spike = utils.calc_bits_per_spike(spike_train, rate)
+        sh_bits_per_spike = utils.calc_bits_per_spike(spike_train, np.random.permutation(rate))
+        
+        # plt.plot(spike_train.T, label='Binned Spike Train', color='blue', alpha=0.5)
+        # plt.plot(rate.T, label='Firing Rate', color='orange', alpha=0.5)
+        # plt.show()
+
+        bits_per_spike_results.append({
+                'session': session_name,
+                'taste': taste,
+                'neuron': neuron,
+                'bits_per_spike': bits_per_spike,
+                'sh_bits_per_spike': sh_bits_per_spike,
+                'mean_fr': mean_fr,
+                'fr_array': rate,
+                'spike_train': spike_train
+                })
+
+bps_df = pd.DataFrame(bits_per_spike_results)
+bps_df['bits_per_spike_diff'] = bps_df['bits_per_spike'] - bps_df['sh_bits_per_spike']
+
+# Sort by session, taste, neuron
+bps_df = bps_df.sort_values(by=['session', 'taste', 'neuron']).reset_index(drop=True)
+
+# Plot bits per spike vs shuffled bits per spike
+# Both as scatter and difference histogram
+fig, ax = plt.subplots(1,2, figsize=(10,5))
+sns.scatterplot(x='bits_per_spike', y='sh_bits_per_spike', data=bps_df, ax=ax[0])
+ax[0].plot([bps_df['bits_per_spike'].min(), bps_df['bits_per_spike'].max()], [bps_df['bits_per_spike'].min(), bps_df['bits_per_spike'].max()], 'r--')
+ax[0].set_xlabel('Bits per Spike')
+ax[0].set_ylabel('Shuffled Bits per Spike')
+ax[0].set_title('Bits per Spike vs Shuffled Bits per Spike')
+sns.histplot(bps_df['bits_per_spike'] - bps_df['sh_bits_per_spike'], bins=30, ax=ax[1])
+# set log scale for y axis
+ax[1].set_yscale('log')
+# Plot vertical line at 0 for reference
+ax[1].axvline(0, color='r', linestyle='--')
+# Plot median line for reference and annotate with median value
+median_diff = (bps_df['bits_per_spike'] - bps_df['sh_bits_per_spike']).median()
+mean_diff = (bps_df['bits_per_spike'] - bps_df['sh_bits_per_spike']).mean()
+ax[1].axvline(median_diff, color='g', linestyle='--')
+ax[1].annotate(f'Median: {median_diff:.2f}', xy=(median_diff, ax[1].get_ylim()[1]*0.8), xytext=(median_diff+0.5, ax[1].get_ylim()[1]*0.8), arrowprops=dict(arrowstyle='->', color='green'), color='green')
+ax[1].axvline(mean_diff, color='b', linestyle='--')
+ax[1].annotate(f'Mean: {mean_diff:.2f}', xy=(mean_diff, ax[1].get_ylim()[1]*0.6), xytext=(mean_diff+0.5, ax[1].get_ylim()[1]*0.6), arrowprops=dict(arrowstyle='->', color='blue'), color='blue')
+ax[1].set_xlabel('Bits per Spike - Shuffled Bits per Spike')
+ax[1].set_title('Distribution of Bits per Spike - Shuffled Bits per Spike')
+plt.tight_layout()
+plt.savefig(os.path.join(pop_analysis_plot_dir, f'bits_per_spike_vs_shuffled.png'), bbox_inches='tight')
+plt.close()
+
+# Look for any relationship bewteen:
+# 1) firing rate and bits per spike
+# 2) firing rate and bits per spike - shuffled bits per spike
+fig, ax = plt.subplots(1,2, figsize=(10,5))
+sns.scatterplot(x='mean_fr', y='bits_per_spike', data=bps_df, ax=ax[0])
+ax[0].set_xlabel('Mean Firing Rate')
+ax[0].set_ylabel('Bits per Spike')
+ax[0].set_title('Bits per Spike vs Mean Firing Rate')
+sns.scatterplot(x='mean_fr', y='bits_per_spike_diff', data=bps_df, ax=ax[1])
+ax[1].set_xlabel('Mean Firing Rate')
+ax[1].set_ylabel('Bits per Spike - Shuffled Bits per Spike')
+ax[1].set_title('Bits per Spike - Shuffled Bits per Spike vs Mean Firing Rate')
+plt.tight_layout()
+plt.savefig(os.path.join(pop_analysis_plot_dir, f'bits_per_spike_vs_firing_rate.png'), bbox_inches='tight')
+plt.close()
+
+# Check whether bps-diff is session and taste dependent
+g = sns.catplot(
+        x='session', y='bits_per_spike_diff', hue='taste', 
+        data=bps_df, 
+        kind='bar', 
+        height=5, aspect=1.5,
+        )
+g.set_axis_labels('Taste', 'Bits per Spike - Shuffled Bits per Spike')
+g.set_xticklabels(rotation=45, ha='right')
+g.set_titles('Bits per Spike - Shuffled Bits per Spike by Taste and Session')
+plt.savefig(os.path.join(pop_analysis_plot_dir, f'bits_per_spike_diff_by_taste_session.png'), bbox_inches='tight')
+plt.close()
+
+# Plot n units for highest and lowest diff bps
+plot_n = 5
+top_bps = bps_df.sort_values(by='bits_per_spike_diff', ascending=False).head(plot_n)
+bottom_bps = bps_df.sort_values(by='bits_per_spike_diff', ascending=True).head(plot_n)
+
+fig, ax = plt.subplots(plot_n, 2, figsize=(10, plot_n*3))
+for i in range(plot_n):
+    top_row = top_bps.iloc[i]
+    bottom_row = bottom_bps.iloc[i]
+
+    ax[i, 0].plot(top_row['spike_train'].T, color='blue', alpha=0.5)
+    ax[i, 0].plot(top_row['fr_array'].T , color='orange', alpha=0.5)
+    ax[i, 0].set_title(f"Top {i+1} - Session: {top_row['session']}, Taste: {top_row['taste']}, Neuron: {top_row['neuron']}\nBits per Spike Diff: {top_row['bits_per_spike_diff']:.2f}")
+    ax[i, 0].legend()
+
+    ax[i, 1].plot(bottom_row['spike_train'], color='blue', alpha=0.5)
+    ax[i, 1].plot(bottom_row['fr_array'], color='orange', alpha=0.5)
+    ax[i, 1].set_title(f"Bottom {i+1} - Session: {bottom_row['session']}, Taste: {bottom_row['taste']}, Neuron: {bottom_row['neuron']}\nBits per Spike Diff: {bottom_row['bits_per_spike_diff']:.2f}")
+    ax[i, 1].legend()
+plt.tight_layout()
+plt.savefig(os.path.join(pop_analysis_plot_dir, f'top_bottom_bits_per_spike_diff.png'), bbox_inches='tight')
 plt.close()
