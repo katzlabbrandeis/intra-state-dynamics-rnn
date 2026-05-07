@@ -19,6 +19,8 @@ from tqdm import tqdm
 from glob import glob
 import seaborn as sns
 from matplotlib.colors import LogNorm
+from scipy.stats import ttest_1samp
+from sklearn.decomposition import PCA
 
 base_dir = '/media/bigdata/firing_space_plot/intra-state-dynamics-rnn'
 src_dir = os.path.join(base_dir, 'src')
@@ -157,6 +159,8 @@ latent_df = pd.DataFrame(
         data=data_list
         )
 
+# Write out to artifacts as pkl
+latent_df.to_pickle(os.path.join(artifacts_dir, 'all_latent_df.pkl'))
 
 ###########################################################
 # Load RNN-inferred firing rates to calculate bits/spike
@@ -325,6 +329,9 @@ bps_df['bits_per_spike_diff'] = bps_df['bits_per_spike'] - bps_df['sh_bits_per_s
 # Sort by session, taste, neuron
 bps_df = bps_df.sort_values(by=['session', 'taste', 'neuron']).reset_index(drop=True)
 
+# Write out to artifacts as pkl
+bps_df.to_pickle(os.path.join(artifacts_dir, 'bits_per_spike_df.pkl'))
+
 # Plot bits per spike vs shuffled bits per spike
 # Both as scatter and difference histogram
 fig, ax = plt.subplots(1,2, figsize=(10,5))
@@ -402,3 +409,175 @@ for i in range(plot_n):
 plt.tight_layout()
 plt.savefig(os.path.join(pop_analysis_plot_dir, f'top_bottom_bits_per_spike_diff.png'), bbox_inches='tight')
 plt.close()
+
+# Do the same, but with averaged firing rates and spike counts across time bins to see if relationship is clearer
+fig, ax = plt.subplots(plot_n, 2, figsize=(10, plot_n*3))
+for i in range(plot_n):
+    top_row = top_bps.iloc[i]
+    bottom_row = bottom_bps.iloc[i]
+
+    ax[i, 0].plot(top_row['spike_train'].mean(axis=0), color='blue', alpha=0.5)
+    ax[i, 0].plot(top_row['fr_array'].mean(axis=0) , color='orange', alpha=0.5)
+    ax[i, 0].set_title(f"Top {i+1} - Session: {top_row['session']}, Taste: {top_row['taste']}, Neuron: {top_row['neuron']}\nBits per Spike Diff: {top_row['bits_per_spike_diff']:.2f}")
+    ax[i, 0].legend()
+
+    ax[i, 1].plot(bottom_row['spike_train'].mean(axis=0), color='blue', alpha=0.5)
+    ax[i, 1].plot(bottom_row['fr_array'].mean(axis=0), color='orange', alpha=0.5)
+    ax[i, 1].set_title(f"Bottom {i+1} - Session: {bottom_row['session']}, Taste: {bottom_row['taste']}, Neuron: {bottom_row['neuron']}\nBits per Spike Diff: {bottom_row['bits_per_spike_diff']:.2f}")
+    ax[i, 1].legend()
+plt.tight_layout()
+plt.savefig(os.path.join(pop_analysis_plot_dir, f'top_bottom_bits_per_spike_diff_avg.png'), bbox_inches='tight')
+plt.close()
+
+############################################################
+
+# Find which sessions have significantly higher bits per spike than shuffled for all tastes
+session_bps_summary = bps_df.groupby(['session','taste'])['bits_per_spike_diff'].agg(['mean', 'median', 'std', 'count'])
+session_bps_summary.reset_index(inplace=True)
+# For each session and taste, perform one-sample t-test to see if bits_per_spike_diff is significantly greater than 0
+p_value_list = []
+for session, taste in session_bps_summary[['session', 'taste']].values:
+    subset = bps_df[(bps_df['session'] == session) & (bps_df['taste'] == taste)]
+    t_stat, p_value = ttest_1samp(subset['bits_per_spike_diff'], popmean=0, alternative='greater')
+    p_value_list.append(p_value)
+
+alpha = 0.05
+session_bps_summary['significant'] = session_bps_summary['p_value'] < alpha
+
+session_bps_summary.groupby('session')['significant'].mean()
+
+# Write out session_bps_summary to artifacts as csv
+session_bps_summary.to_csv(os.path.join(artifacts_dir, 'session_bps_summary.csv'), index=False)
+
+# Get only signifincant sessions/tastes
+sig_fits_df = session_bps_summary[session_bps_summary['significant']]
+
+# Extract significant latents
+latent_df = pd.merge(
+        sig_fits_df[['session', 'taste']],
+        latent_df,
+        left_on=['session', 'taste'],
+        right_on=['session', 'taste'],
+        how='inner'
+        )
+
+# Plot all significant latents for each session and taste
+sig_latent_plot_dir = os.path.join(pop_analysis_plot_dir, 'significant_latents')
+os.makedirs(sig_latent_plot_dir, exist_ok=True)
+
+for row_ind, this_row in tqdm(latent_df.iterrows(), total=latent_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    latent_array = this_row['latent_array']
+
+    n_plots = latent_array.shape[1]
+    n_rows = int(np.ceil(np.sqrt(n_plots)))
+    n_cols = int(np.ceil(n_plots / n_rows))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*3, n_rows*3))
+    for latent_dim in range(latent_array.shape[1]):
+        row = latent_dim // n_cols
+        col = latent_dim % n_cols
+        axes[row, col].imshow(latent_array[:, latent_dim, :], interpolation='nearest', aspect='auto')
+        axes[row, col].set_title(f'Latent Dim {latent_dim}')
+    plt.suptitle(f'Session: {session_name}, Taste: {taste}')
+    plt.tight_layout()
+    plt.savefig(os.path.join(sig_latent_plot_dir, f'{session_name}_taste{taste}_significant_latents.png'), bbox_inches='tight')
+    plt.close()
+
+# Also apply PCA to determine useful # of latents
+all_exp_var_ratios = []
+for row_ind, this_row in tqdm(latent_df.iterrows(), total=latent_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    latent_array = this_row['latent_array']
+
+    # Reshape to (trials*time, latent_dim)
+    n_trials, n_latent_dims, n_time_bins = latent_array.shape
+    reshaped_latent_array = latent_array.transpose(0, 2, 1).reshape(-1, n_latent_dims)
+
+    pca = PCA()
+    pca.fit(reshaped_latent_array)
+    explained_variance_ratio = pca.explained_variance_ratio_
+    all_exp_var_ratios.append({
+            'session': session_name,
+            'taste': taste,
+            'explained_variance_ratio': explained_variance_ratio
+            })
+
+# Plot explained variance ratio for each session and taste
+exp_var_df = pd.DataFrame(all_exp_var_ratios)
+
+plt.figure(figsize=(5,5))
+cumsum_exp_var_ratios = []
+for row_ind, this_row in tqdm(exp_var_df.iterrows(), total=exp_var_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    explained_variance_ratio = this_row['explained_variance_ratio']
+    cumsum_exp_var = np.cumsum(explained_variance_ratio)
+    cumsum_exp_var_ratios.append(cumsum_exp_var)
+    plt.plot(
+            np.arange(1, len(explained_variance_ratio)+1),
+            cumsum_exp_var, marker='o', color = 'k', alpha = 0.3
+            )
+# Also plot mean explained variance ratio across sessions
+mean_cumsum_exp_var = np.mean(cumsum_exp_var_ratios, axis=0)
+plt.plot(
+        np.arange(1, len(mean_cumsum_exp_var)+1),
+        mean_cumsum_exp_var, marker='o', color='r', label='Mean across sessions',
+        linewidth=2
+        )
+# Annotate with mean exp_var for each component and dashed line at 90% variance explained
+for i, exp_var in enumerate(mean_cumsum_exp_var):
+    plt.annotate(f'{exp_var:.2f}', xy=(i+1, 0.1), xytext=(i+1, 0.1), ha='center')
+plt.axhline(0.9, color='gray', linestyle='--', label='90% Variance Explained')
+plt.ylim(0, 1)
+plt.xlabel('Number of Principal Components')
+plt.ylabel('Cumulative Explained Variance Ratio')
+plt.title('PCA Explained Variance Ratio for Significant Latents')
+plt.grid()
+plt.savefig(os.path.join(sig_latent_plot_dir, f'{session_name}_taste{taste}_pca_explained_variance.png'), bbox_inches='tight')
+plt.close()
+
+##############################
+# Compress latents down to 4 components and write to artifacts
+compressed_latent_arrays = []
+for row_ind, this_row in tqdm(latent_df.iterrows(), total=latent_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    latent_array = this_row['latent_array']
+
+    # Reshape to (trials*time, latent_dim)
+    n_trials, n_latent_dims, n_time_bins = latent_array.shape
+    reshaped_latent_array = latent_array.transpose(0, 2, 1).reshape(-1, n_latent_dims)
+
+    pca = PCA(n_components=4)
+    compressed_latent_array = pca.fit_transform(reshaped_latent_array)
+    compressed_latent_array = compressed_latent_array.reshape(n_trials, n_time_bins, 4).transpose(0, 2, 1)
+    compressed_latent_arrays.append(compressed_latent_array)
+
+latent_df['pca_latents'] = compressed_latent_arrays
+
+# Write out to artifacts as pkl
+latent_df.to_pickle(os.path.join(artifacts_dir, 'all_latent_df.pkl'))
+
+# Plot pca latents for each session and taste
+for row_ind, this_row in tqdm(latent_df.iterrows(), total=latent_df.shape[0]):
+    session_name = this_row['session']
+    taste = this_row['taste']
+    latent_array = this_row['pca_latents']
+
+    n_plots = latent_array.shape[1]
+    n_rows = int(np.ceil(np.sqrt(n_plots)))
+    n_cols = int(np.ceil(n_plots / n_rows))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(n_cols*3, n_rows*3))
+    for latent_dim in range(latent_array.shape[1]):
+        row = latent_dim // n_cols
+        col = latent_dim % n_cols
+        axes[row, col].imshow(latent_array[:, latent_dim, :], interpolation='nearest', aspect='auto')
+        axes[row, col].set_title(f'PCA Latent Dim {latent_dim}')
+    plt.suptitle(f'Session: {session_name}, Taste: {taste} - PCA Compressed Latents')
+    plt.tight_layout()
+    plt.savefig(os.path.join(sig_latent_plot_dir, f'{session_name}_taste{taste}_pca_compressed_latents.png'), bbox_inches='tight')
+    plt.close()
